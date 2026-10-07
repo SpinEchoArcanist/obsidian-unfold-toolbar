@@ -1,0 +1,84 @@
+/* Unfold Toolbar
+ *
+ * Obsidian positions its mobile toolbar, and reserves room for it, from one variable:
+ * --mobile-toolbar-height. Unfolding raises that variable, so the toolbar grows upward and
+ * the note shrinks to match. Rows fill from the bottom up, so the folded row never moves.
+ *
+ * The pixel sizes (--ut-list-* and --ut-toolbar-*) are written by main.js from the settings.
+ * Obsidian keeps .is-phone / .is-tablet on <body> up to date, so rotation and iPad
+ * Split View are followed without any script.
+ */
+
+/* ------------------------------------------------------------------ */
+/* How tall the unfolded toolbar is, per screen                        */
+/* ------------------------------------------------------------------ */
+
+body.is-mobile.is-phone.ut-unfolded {
+	--ut-list-height: var(--ut-list-phone-portrait, var(--touch-size-m));
+	--mobile-toolbar-height: var(--ut-toolbar-phone-portrait, var(--touch-size-l));
+}
+
+@media (orientation: landscape) {
+	body.is-mobile.is-phone.ut-unfolded {
+		--ut-list-height: var(--ut-list-phone-landscape, var(--touch-size-m));
+		--mobile-toolbar-height: var(--ut-toolbar-phone-landscape, var(--touch-size-l));
+	}
+}
+
+body.is-mobile.is-tablet.ut-unfolded {
+	--ut-list-height: var(--ut-list-tablet, var(--touch-size-m));
+	--mobile-toolbar-height: var(--ut-toolbar-tablet, var(--touch-size-l));
+}
+
+/* ------------------------------------------------------------------ */
+/* Layout while unfolded                                               */
+/* ------------------------------------------------------------------ */
+
+/* Keep the iOS keyboard button level with the bottom row. */
+body.is-mobile.ut-unfolded .mobile-toolbar-options-container {
+	align-items: flex-end;
+}
+
+/* The scroll area. Column-reverse anchors it to the bottom, so any rows beyond the
+   chosen height stay reachable by scrolling up. Content-box keeps Obsidian's frame
+   (borders on floating-nav themes) outside the rows, as in the folded toolbar. */
+body.is-mobile.ut-unfolded .mobile-toolbar-options-list-container {
+	box-sizing: content-box;
+	height: var(--ut-list-height, var(--touch-size-m));
+	display: flex;
+	flex-direction: column-reverse;
+	overflow-x: hidden;
+	overflow-y: auto;
+	overscroll-behavior: contain;
+	scrollbar-width: none;
+}
+
+body.is-mobile.ut-unfolded .mobile-toolbar-options-list-container::-webkit-scrollbar {
+	display: none;
+}
+
+/* The buttons wrap into rows; wrap-reverse stacks each new row above the previous one. */
+body.is-mobile.ut-unfolded .mobile-toolbar-options-list {
+	flex: 0 0 auto;
+	height: auto;
+	min-height: 100%;
+	flex-wrap: wrap-reverse;
+	align-content: flex-start;
+	overflow: visible;
+}
+
+/* Same width as in the folded row, so every button keeps its column. */
+body.is-mobile.ut-unfolded .mobile-toolbar-options-list > .mobile-toolbar-option {
+	flex: 0 0 var(--toolbar-option-width);
+	height: var(--touch-size-m);
+}
+
+/* ------------------------------------------------------------------ */
+/* Fold button                                                         */
+/* ------------------------------------------------------------------ */
+
+/* The chevron points up to unfold, and down (in the accent color) to fold back. */
+body.is-mobile.ut-unfolded .mobile-toolbar-option svg.unfold-toolbar-chevron {
+	color: var(--text-accent);
+	transform: rotate(180deg);
+}
