@@ -5,23 +5,17 @@ interface UnfoldToolbarSettings {
 	rowsPhoneLandscape: number;
 	rowsTablet: number;
 	startFolded: boolean;
-	overflowHint: boolean;
-	fitColumns: boolean;
 	animate: boolean;
 }
 
 type RowsKey = "rowsPhonePortrait" | "rowsPhoneLandscape" | "rowsTablet";
-type FlagKey = "startFolded" | ExperimentalKey;
-/** Features still being tested: off by default, listed under "Experimental" in the settings. */
-type ExperimentalKey = "overflowHint" | "fitColumns" | "animate";
+type FlagKey = "startFolded" | "animate";
 
 const DEFAULT_SETTINGS: UnfoldToolbarSettings = {
 	rowsPhonePortrait: 4,
 	rowsPhoneLandscape: 2,
 	rowsTablet: 4,
 	startFolded: true,
-	overflowHint: false,
-	fitColumns: false,
 	animate: false,
 };
 
@@ -62,7 +56,7 @@ const SHIFT_PROP = "--ut-frame-shift";
 /** Set on <body> while rows are out of sight above or below the visible ones; styles.css fades that edge. */
 const MORE_ABOVE_CLASS = "ut-more-above";
 const MORE_BELOW_CLASS = "ut-more-below";
-/** Set on <body> while "Fit whole columns" has narrowed the unfolded toolbar; styles.css pins its left edge. */
+/** Set on <body> while the unfolded toolbar is narrowed to whole columns; styles.css pins its left edge. */
 const FITTED_CLASS = "ut-fitted";
 /** Set for the length of the unfold and fold motion; durations match the keyframes in styles.css. */
 const UNFOLDING_CLASS = "ut-unfolding";
@@ -177,8 +171,6 @@ export default class UnfoldToolbarPlugin extends Plugin {
 			rowsPhoneLandscape: rows("rowsPhoneLandscape"),
 			rowsTablet: rows("rowsTablet"),
 			startFolded: flag("startFolded"),
-			overflowHint: flag("overflowHint"),
-			fitColumns: flag("fitColumns"),
 			animate: flag("animate"),
 		};
 	}
@@ -257,7 +249,7 @@ export default class UnfoldToolbarPlugin extends Plugin {
 	private fold(): void {
 		if (this.hintFrame !== null) window.cancelAnimationFrame(this.hintFrame);
 		this.hintFrame = null;
-		document.body.removeClass(UNFOLDED_CLASS, MORE_ABOVE_CLASS, MORE_BELOW_CLASS);
+		document.body.removeClass(UNFOLDED_CLASS, MORE_ABOVE_CLASS, MORE_BELOW_CLASS, FITTED_CLASS);
 	}
 
 	private startMotion(cls: string, duration: number, then?: () => void): void {
@@ -300,7 +292,6 @@ export default class UnfoldToolbarPlugin extends Plugin {
 		// Measured at the width the toolbar takes without a column count: all the room there is.
 		document.body.removeClass(FITTED_CLASS);
 		document.body.setCssProps({ [COLUMNS_PROP]: "", [SHIFT_PROP]: "" });
-		if (!this.settings.fitColumns) return;
 		const frame = document.body.querySelector<HTMLElement>(FRAME_SELECTOR);
 		const list = frame?.querySelector<HTMLElement>(LIST_SELECTOR);
 		const button = list?.firstElementChild;
@@ -336,7 +327,7 @@ export default class UnfoldToolbarPlugin extends Plugin {
 	 * shrinks smoothly while the rows scroll instead of appearing at once.
 	 */
 	private updateOverflowHint(): void {
-		const rows = this.settings.overflowHint && this.isUnfolded() ? this.hiddenRows() : null;
+		const rows = this.isUnfolded() ? this.hiddenRows() : null;
 		const above = rows !== null && rows.above > 1;
 		const below = rows !== null && rows.below > 1;
 		document.body.toggleClass(MORE_ABOVE_CLASS, above);
@@ -356,7 +347,7 @@ export default class UnfoldToolbarPlugin extends Plugin {
 
 	/** Keeps the fade on the rows while they scroll: one update per frame. */
 	private onFrameScroll(evt: Event): void {
-		if (!this.settings.overflowHint || !this.isUnfolded()) return;
+		if (!this.isUnfolded()) return;
 		if (!(evt.target instanceof Element) || !evt.target.matches(FRAME_SELECTOR)) return;
 		if (this.hintFrame !== null) return;
 		this.hintFrame = window.requestAnimationFrame(() => {
@@ -436,6 +427,10 @@ const TEXT = {
 		name: "Start folded",
 		desc: "The toolbar opens as a single row each time you start editing. Turn off to keep it the way you left it on this device.",
 	},
+	animate: {
+		name: "Animate",
+		desc: "The toolbar unfolds and folds with a short motion. Skipped when your device is set to reduce motion.",
+	},
 	rowsHeading: "Rows when unfolded",
 	rowsPhonePortrait: { name: "Phone, portrait", desc: "" },
 	rowsPhoneLandscape: {
@@ -444,22 +439,21 @@ const TEXT = {
 	},
 	rowsTablet: { name: "Tablet", desc: "Used in both orientations." },
 	experimentalHeading: "Experimental",
-	overflowHint: {
-		name: "Fade hidden rows",
-		desc: "When there are more buttons than rows, the edge where more are out of sight fades out.",
-	},
-	fitColumns: {
-		name: "Fit whole columns",
-		desc: "The unfolded toolbar ends right after its last column, with no empty strip.",
-	},
-	animate: {
-		name: "Animate",
-		desc: "The toolbar unfolds and folds with a short motion. Skipped when your device is set to reduce motion.",
+	experimentalNote: {
+		name: "Features in testing",
+		desc: "New features appear here first, switched off, while they are being tested. Once tested, they become standard or are removed.",
+		empty: " Nothing is being tested at the moment.",
 	},
 } as const;
 
-const EXPERIMENTAL_KEYS: ExperimentalKey[] = ["overflowHint", "fitColumns", "animate"];
-const FLAG_KEYS: FlagKey[] = ["startFolded", ...EXPERIMENTAL_KEYS];
+/** Features still being tested: off by default, listed under "Experimental" in the settings. None at the moment. */
+const EXPERIMENTAL_KEYS: FlagKey[] = [];
+const FLAG_KEYS: FlagKey[] = ["startFolded", "animate", ...EXPERIMENTAL_KEYS];
+/** The Experimental section's explanation, which also says when nothing is being tested. */
+const EXPERIMENTAL_NOTE = {
+	name: TEXT.experimentalNote.name,
+	desc: TEXT.experimentalNote.desc + (EXPERIMENTAL_KEYS.length === 0 ? TEXT.experimentalNote.empty : ""),
+};
 const ROW_KEYS: RowsKey[] = ["rowsPhonePortrait", "rowsPhoneLandscape", "rowsTablet"];
 
 class UnfoldToolbarSettingTab extends PluginSettingTab {
@@ -474,6 +468,7 @@ class UnfoldToolbarSettingTab extends PluginSettingTab {
 	getSettingDefinitions(): SettingDefinitionItem[] {
 		return [
 			{ ...TEXT.startFolded, control: { type: "toggle", key: "startFolded" } },
+			{ ...TEXT.animate, control: { type: "toggle", key: "animate" } },
 			{
 				type: "group",
 				heading: TEXT.rowsHeading,
@@ -486,7 +481,10 @@ class UnfoldToolbarSettingTab extends PluginSettingTab {
 			{
 				type: "group",
 				heading: TEXT.experimentalHeading,
-				items: EXPERIMENTAL_KEYS.map((key) => ({ ...TEXT[key], control: { type: "toggle" as const, key } })),
+				items: [
+					{ ...EXPERIMENTAL_NOTE, searchable: false },
+					...EXPERIMENTAL_KEYS.map((key) => ({ ...TEXT[key], control: { type: "toggle" as const, key } })),
+				],
 			},
 		];
 	}
@@ -514,6 +512,7 @@ class UnfoldToolbarSettingTab extends PluginSettingTab {
 		containerEl.empty();
 
 		this.addToggle(containerEl, "startFolded");
+		this.addToggle(containerEl, "animate");
 
 		new Setting(containerEl).setName(TEXT.rowsHeading).setHeading();
 		for (const key of ROW_KEYS) {
@@ -530,6 +529,7 @@ class UnfoldToolbarSettingTab extends PluginSettingTab {
 		}
 
 		new Setting(containerEl).setName(TEXT.experimentalHeading).setHeading();
+		new Setting(containerEl).setName(EXPERIMENTAL_NOTE.name).setDesc(EXPERIMENTAL_NOTE.desc);
 		for (const key of EXPERIMENTAL_KEYS) this.addToggle(containerEl, key);
 	}
 

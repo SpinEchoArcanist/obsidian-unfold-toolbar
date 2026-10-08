@@ -113,7 +113,7 @@ body.is-mobile.ut-unfolded .mobile-toolbar-options-list-container::-webkit-scrol
 	display: none;
 }
 
-/* "Fit whole columns" narrowed the toolbar: its left edge stays where it is folded, so no
+/* The toolbar is narrowed to whole columns: its left edge stays where it is folded, so no
    button moves, and the room it frees goes to its right. --ut-frame-shift is main.js's
    correction in case Obsidian centres the toolbar some other way. */
 body.is-mobile.ut-unfolded.ut-fitted .mobile-toolbar-options-list-container {

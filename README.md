@@ -50,27 +50,26 @@ Install it with [BRAT](https://github.com/TfTHacker/obsidian42-brat):
 | Setting          | Default | Choices  | Notes                                                                                                                                       |
 | ---------------- | ------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
 | Start folded     | On      | On / Off | On: the toolbar opens as a single row each time you start editing. Off: it stays as you left it, remembered separately on each device.      |
+| Animate          | Off     | On / Off | The toolbar unfolds and folds with a short motion (150 ms to unfold, 110 ms to fold). Skipped when your device is set to reduce motion.     |
 | Phone, portrait  | 4 rows  | 2–6      | Select how many rows are applied when the toolbar is unfolded. More rows let you see more commands, but take up more screen space. |
 | Phone, landscape | 2 rows  | 1–3      | The keyboard takes most of the screen in landscape. 1 row keeps the toolbar folded.                                                         |
 | Tablet           | 4 rows  | 2–8      | Used in both orientations.                                                                                                                  |
 
-If you have more shortcuts than fit in the chosen rows, the unfolded toolbar scrolls up to show them. It always starts at the bottom row.
+If you have more shortcuts than fit in the chosen rows, the unfolded toolbar scrolls up to show them. It always starts at the bottom row. A soft fade on the edge of the rows shows when more are out of sight, and follows the rows while you scroll.
 
 ### Experimental features
 
-These features are still being tested. They are **off by default**, so they change nothing until you turn them on under *Settings → Unfold Toolbar → Experimental*. Each one may change, move to the main settings, or be removed in a later version.
+The settings end with an *Experimental* section. New features are released there first, **switched off**, so an update never changes how the toolbar behaves for you until you choose to try something. Once a feature has been tested, it either becomes standard behaviour or is removed, and leaves this section.
 
-| Setting                     | What it does                                                                                                                                                         |
-| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Fade hidden rows            | When there are more buttons than rows, the edge where more are out of sight fades out, so you can tell the toolbar scrolls. Nothing fades when everything fits.      |
-| Fit whole columns           | The unfolded toolbar ends right after its last column, with no empty strip at its right end. Its left edge stays in place, so no button moves.                        |
-| Animate                     | The toolbar unfolds and folds with a short motion. Skipped when your device is set to reduce motion.                                                                 |
+Nothing is being tested at the moment, so the section only shows a short note.
 
 ## Appearance
 
 The plugin also gives every toolbar button a soft rounded tile, adds a little space at the ends of each row, and uses a gentler corner radius when unfolded. These styles apply to the folded toolbar too: if they changed only when unfolding, your usual row would shift each time. Colours follow your theme in light and dark mode.
 
 On narrow phones, the extra space at the row ends can fit one button fewer per row.
+
+When unfolded, the toolbar ends right after its last whole column, so there is no empty strip at its right end. Its left edge stays where it is when folded, so no button moves.
 
 ## How it works
 
@@ -96,14 +95,13 @@ I thus created this plugin to have a better toolbar user experience: When the to
 
 ## Changelog
 
-**0.3.1**
-- Swiping on the toolbar, and folding when you resume typing, are now standard behaviour (no longer experimental).
-- Fade hidden rows: the fade stays visible while the rows scroll, and grows or shrinks with what is hidden instead of appearing at once.
-- Fit whole columns: the narrowed toolbar keeps its left edge, so the buttons no longer shift sideways.
-- Animate: shorter and snappier (150 ms to unfold, 110 ms to fold).
-
-**0.3.0**
-- New *Experimental* section in the settings, with five features that are off by default: Fold when you resume typing, Fade hidden rows, Fit whole columns, Animate, and Swipe to unfold.
+**0.3.2**
+- Swipe up on the toolbar to unfold it, and down to fold it.
+- The unfolded toolbar folds back by itself when you resume typing; tapping its buttons keeps it open.
+- A fade on the edge of the rows shows when more buttons are out of sight, and follows the rows while you scroll.
+- The unfolded toolbar fits whole columns, with no empty strip, and keeps its left edge so no button moves.
+- New *Animate* setting (off by default): a short motion when unfolding and folding.
+- New *Experimental* section in the settings, where future features are tested before they become standard.
 - Settings changed on another device now apply without restarting Obsidian.
 
 **0.2.1**
