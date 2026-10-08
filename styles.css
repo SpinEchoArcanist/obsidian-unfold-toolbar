@@ -21,8 +21,7 @@ body.is-mobile {
 	--ut-key-background: color-mix(in srgb, var(--text-normal) 7%, transparent);
 	--ut-key-background-pressed: color-mix(in srgb, var(--text-normal) 16%, transparent);
 	--ut-unfolded-radius: 18px;
-	/* Fade on the edge of the rows when more buttons are out of sight: its length, and how faint the edge gets. */
-	--ut-fade: calc(var(--touch-size-m) * 0.8);
+	/* How faint the very edge of the rows gets when more buttons are out of sight (the fade's length is set by main.js). */
 	--ut-fade-edge: rgb(0 0 0 / 0.05);
 	/* Height of the folded frame, where the unfold motion starts and the fold motion ends. */
 	--ut-motion-start: var(--touch-size-l);
@@ -114,6 +113,14 @@ body.is-mobile.ut-unfolded .mobile-toolbar-options-list-container::-webkit-scrol
 	display: none;
 }
 
+/* "Fit whole columns" narrowed the toolbar: its left edge stays where it is folded, so no
+   button moves, and the room it frees goes to its right. --ut-frame-shift is main.js's
+   correction in case Obsidian centres the toolbar some other way. */
+body.is-mobile.ut-unfolded.ut-fitted .mobile-toolbar-options-list-container {
+	margin-inline-end: auto;
+	translate: var(--ut-frame-shift, 0px);
+}
+
 /* The buttons wrap into rows; wrap-reverse stacks each new row above the previous one.
    A hairline above the bottom row marks it as the folded row; the rest are the extra rows. */
 body.is-mobile.ut-unfolded .mobile-toolbar-options-list {
@@ -142,17 +149,10 @@ body.is-mobile.ut-unfolded .mobile-toolbar-options-list > .mobile-toolbar-option
 
 /* When more buttons than the chosen rows hold, the edge with hidden rows fades out.
    The mask is drawn on the list, sized and placed over the visible rows by main.js, so
-   Obsidian's frame (background, border, shadow) is never faded. It is left out while the
-   rows scroll, and comes back where they settle. */
-body.is-mobile.ut-unfolded.ut-more-above {
-	--ut-fade-top: var(--ut-fade);
-}
-
-body.is-mobile.ut-unfolded.ut-more-below {
-	--ut-fade-bottom: var(--ut-fade);
-}
-
-body.is-mobile.ut-unfolded:is(.ut-more-above, .ut-more-below):not(.ut-scrolling) .mobile-toolbar-options-list {
+   Obsidian's frame (background, border, shadow) is never faded. main.js moves it with the
+   rows while they scroll, and sets each fade's length (--ut-fade-top, --ut-fade-bottom) to
+   how much is hidden on that side, so the fades grow and shrink instead of appearing at once. */
+body.is-mobile.ut-unfolded:is(.ut-more-above, .ut-more-below) .mobile-toolbar-options-list {
 	--ut-fade-mask: linear-gradient(
 		to bottom,
 		var(--ut-fade-edge),
@@ -211,11 +211,11 @@ body.is-mobile.ut-unfolded .mobile-toolbar-options-list > .mobile-toolbar-option
 
 /* Durations match UNFOLD_MS and FOLD_MS in main.js. */
 body.is-mobile.ut-unfolding .mobile-toolbar-options-list-container {
-	animation: ut-unfold 200ms cubic-bezier(0.2, 0.9, 0.3, 1);
+	animation: ut-unfold 150ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 body.is-mobile.ut-folding .mobile-toolbar-options-list-container {
-	animation: ut-fold 150ms cubic-bezier(0.4, 0, 1, 1) forwards;
+	animation: ut-fold 110ms cubic-bezier(0.4, 0, 1, 1) forwards;
 }
 
 @media (prefers-reduced-motion: reduce) {

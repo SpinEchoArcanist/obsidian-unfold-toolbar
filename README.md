@@ -22,6 +22,10 @@ Attention: the plugin is only available through BRAT.
 2. Tap the chevron button (⌃). The toolbar unfolds into several rows.
 3. Tap the button again (now ⌄, on an accent-coloured tile) to fold it back.
 
+You can also swipe up on the toolbar to unfold it, and swipe down to fold it. If some rows are scrolled out of sight above, the first swipe down shows them and the next one folds.
+
+When you start typing in the note again, the unfolded toolbar folds back by itself. Tapping its buttons keeps it open, so you can tap undo or indent several times in a row.
+
 Your usual row never moves. Rows fill from the bottom up, so the folded row becomes the bottom row of the unfolded toolbar, and the extra shortcuts appear above it. A thin line separates the folded row from the extra rows.
 
 ## Setup
@@ -58,11 +62,9 @@ These features are still being tested. They are **off by default**, so they chan
 
 | Setting                     | What it does                                                                                                                                                         |
 | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Fold when you resume typing | The unfolded toolbar folds back to a single row as soon as you type in the note. Tapping its buttons keeps it open, so you can tap undo or indent several times.      |
 | Fade hidden rows            | When there are more buttons than rows, the edge where more are out of sight fades out, so you can tell the toolbar scrolls. Nothing fades when everything fits.      |
-| Fit whole columns           | The unfolded toolbar ends right after its last column, with no empty strip at its right end. Your usual row doesn't move.                                             |
+| Fit whole columns           | The unfolded toolbar ends right after its last column, with no empty strip at its right end. Its left edge stays in place, so no button moves.                        |
 | Animate                     | The toolbar unfolds and folds with a short motion. Skipped when your device is set to reduce motion.                                                                 |
-| Swipe to unfold             | Swipe up on the toolbar to unfold it, and down to fold it. If rows are scrolled out of sight above, the first swipe down shows them and the next one folds.           |
 
 ## Appearance
 
@@ -93,6 +95,12 @@ Double Row Toolbar was the closest thing I could find, and I sincerely thank the
 I thus created this plugin to have a better toolbar user experience: When the toolbar is not needed it takes up a single row, so the most useful commands are always available, but the least vertical space is taken up. Then with a button within the toolbar itself, the toolbar unfolds to 4 rows to show all the commands in one go, and make the command search easier. This unfolded vertical height can also be adapted in the settings (from 2 to 6 rows on a phone in portrait, 1 to 3 in landscape, and 2 to 8 on a tablet) to adapt it to your own number of commands.
 
 ## Changelog
+
+**0.3.1**
+- Swiping on the toolbar, and folding when you resume typing, are now standard behaviour (no longer experimental).
+- Fade hidden rows: the fade stays visible while the rows scroll, and grows or shrinks with what is hidden instead of appearing at once.
+- Fit whole columns: the narrowed toolbar keeps its left edge, so the buttons no longer shift sideways.
+- Animate: shorter and snappier (150 ms to unfold, 110 ms to fold).
 
 **0.3.0**
 - New *Experimental* section in the settings, with five features that are off by default: Fold when you resume typing, Fade hidden rows, Fit whole columns, Animate, and Swipe to unfold.

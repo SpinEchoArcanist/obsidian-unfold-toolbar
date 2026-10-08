@@ -5,28 +5,24 @@ interface UnfoldToolbarSettings {
 	rowsPhoneLandscape: number;
 	rowsTablet: number;
 	startFolded: boolean;
-	foldOnTyping: boolean;
 	overflowHint: boolean;
 	fitColumns: boolean;
 	animate: boolean;
-	swipeToUnfold: boolean;
 }
 
 type RowsKey = "rowsPhonePortrait" | "rowsPhoneLandscape" | "rowsTablet";
 type FlagKey = "startFolded" | ExperimentalKey;
 /** Features still being tested: off by default, listed under "Experimental" in the settings. */
-type ExperimentalKey = "foldOnTyping" | "overflowHint" | "fitColumns" | "animate" | "swipeToUnfold";
+type ExperimentalKey = "overflowHint" | "fitColumns" | "animate";
 
 const DEFAULT_SETTINGS: UnfoldToolbarSettings = {
 	rowsPhonePortrait: 4,
 	rowsPhoneLandscape: 2,
 	rowsTablet: 4,
 	startFolded: true,
-	foldOnTyping: false,
 	overflowHint: false,
 	fitColumns: false,
 	animate: false,
-	swipeToUnfold: false,
 };
 
 /** Row counts offered for each kind of screen, and the CSS variable suffix each one feeds. */
@@ -56,17 +52,23 @@ const COLUMNS_PROP = "--ut-columns";
 /** Where the visible rows sit inside the scrolling list, so styles.css can fade only their edges. */
 const MASK_TOP_PROP = "--ut-mask-top";
 const MASK_HEIGHT_PROP = "--ut-mask-height";
+/** Length of the fade at the top and bottom edge: grows with how much is hidden there, up to FADE_ROWS of a row. */
+const FADE_TOP_PROP = "--ut-fade-top";
+const FADE_BOTTOM_PROP = "--ut-fade-bottom";
+const FADE_ROWS = 0.8;
+/** Horizontal correction that keeps the narrowed toolbar's left edge, and so its buttons, in place. */
+const SHIFT_PROP = "--ut-frame-shift";
 
 /** Set on <body> while rows are out of sight above or below the visible ones; styles.css fades that edge. */
 const MORE_ABOVE_CLASS = "ut-more-above";
 const MORE_BELOW_CLASS = "ut-more-below";
-/** Set while the rows are being scrolled: the fade waits until they come to rest. */
-const SCROLLING_CLASS = "ut-scrolling";
+/** Set on <body> while "Fit whole columns" has narrowed the unfolded toolbar; styles.css pins its left edge. */
+const FITTED_CLASS = "ut-fitted";
 /** Set for the length of the unfold and fold motion; durations match the keyframes in styles.css. */
 const UNFOLDING_CLASS = "ut-unfolding";
 const FOLDING_CLASS = "ut-folding";
-const UNFOLD_MS = 200;
-const FOLD_MS = 150;
+const UNFOLD_MS = 150;
+const FOLD_MS = 110;
 
 /** Obsidian's toolbar parts: the scrolling frame and the list of buttons inside it. */
 const FRAME_SELECTOR = ".mobile-toolbar-options-list-container";
@@ -83,24 +85,22 @@ const CSS_PROPS = [
 	COLUMNS_PROP,
 	MASK_TOP_PROP,
 	MASK_HEIGHT_PROP,
+	FADE_TOP_PROP,
+	FADE_BOTTOM_PROP,
+	SHIFT_PROP,
 ];
 
 export default class UnfoldToolbarPlugin extends Plugin {
 	settings: UnfoldToolbarSettings = { ...DEFAULT_SETTINGS };
 	private scrollFrame: number | null = null;
 	private motionTimer: number | null = null;
+	/** The fade's next update while the rows scroll, at most one per frame. */
+	private hintFrame: number | null = null;
+	/** Full length of the fade in pixels; set from the theme's row height in applyHeights(). */
+	private fadeLength = 44 * FADE_ROWS;
 	private swipe: { x: number; y: number; time: number; moreAbove: boolean } | null = null;
 	/** Runs once the screen has stopped resizing (a rotation fires several resize events). */
 	private readonly relayoutAfterResize = debounce(() => this.relayout(), 300, true);
-	/** Runs once the rows have stopped scrolling. */
-	private readonly hintAfterScroll = debounce(
-		() => {
-			document.body.removeClass(SCROLLING_CLASS);
-			this.updateOverflowHint();
-		},
-		150,
-		true
-	);
 
 	async onload(): Promise<void> {
 		await this.loadSettings();
@@ -150,12 +150,13 @@ export default class UnfoldToolbarPlugin extends Plugin {
 
 	onunload(): void {
 		this.relayoutAfterResize.cancel();
-		this.hintAfterScroll.cancel();
 		if (this.scrollFrame !== null) window.cancelAnimationFrame(this.scrollFrame);
 		this.scrollFrame = null;
+		if (this.hintFrame !== null) window.cancelAnimationFrame(this.hintFrame);
+		this.hintFrame = null;
 		if (this.motionTimer !== null) window.clearTimeout(this.motionTimer);
 		this.motionTimer = null;
-		document.body.removeClass(UNFOLDED_CLASS, UNFOLDING_CLASS, FOLDING_CLASS, MORE_ABOVE_CLASS, MORE_BELOW_CLASS, SCROLLING_CLASS);
+		document.body.removeClass(UNFOLDED_CLASS, UNFOLDING_CLASS, FOLDING_CLASS, MORE_ABOVE_CLASS, MORE_BELOW_CLASS, FITTED_CLASS);
 		document.body.setCssProps(Object.fromEntries(CSS_PROPS.map((prop) => [prop, ""])));
 		removeIcon(ICON_ID);
 	}
@@ -176,11 +177,9 @@ export default class UnfoldToolbarPlugin extends Plugin {
 			rowsPhoneLandscape: rows("rowsPhoneLandscape"),
 			rowsTablet: rows("rowsTablet"),
 			startFolded: flag("startFolded"),
-			foldOnTyping: flag("foldOnTyping"),
 			overflowHint: flag("overflowHint"),
 			fitColumns: flag("fitColumns"),
 			animate: flag("animate"),
-			swipeToUnfold: flag("swipeToUnfold"),
 		};
 	}
 
@@ -256,8 +255,9 @@ export default class UnfoldToolbarPlugin extends Plugin {
 	}
 
 	private fold(): void {
-		this.hintAfterScroll.cancel();
-		document.body.removeClass(UNFOLDED_CLASS, MORE_ABOVE_CLASS, MORE_BELOW_CLASS, SCROLLING_CLASS);
+		if (this.hintFrame !== null) window.cancelAnimationFrame(this.hintFrame);
+		this.hintFrame = null;
+		document.body.removeClass(UNFOLDED_CLASS, MORE_ABOVE_CLASS, MORE_BELOW_CLASS);
 	}
 
 	private startMotion(cls: string, duration: number, then?: () => void): void {
@@ -294,21 +294,30 @@ export default class UnfoldToolbarPlugin extends Plugin {
 
 	/**
 	 * Narrows the unfolded toolbar to the whole columns that fit, so no empty strip is left
-	 * at its right end. Buttons stay where they are: the rows start from the left as before.
+	 * at its right end. Its left edge stays put, so no button moves: the room it frees goes to its right.
 	 */
 	private snapColumns(): void {
 		// Measured at the width the toolbar takes without a column count: all the room there is.
-		document.body.setCssProps({ [COLUMNS_PROP]: "" });
+		document.body.removeClass(FITTED_CLASS);
+		document.body.setCssProps({ [COLUMNS_PROP]: "", [SHIFT_PROP]: "" });
 		if (!this.settings.fitColumns) return;
-		const list = document.body.querySelector<HTMLElement>(`${FRAME_SELECTOR} > ${LIST_SELECTOR}`);
+		const frame = document.body.querySelector<HTMLElement>(FRAME_SELECTOR);
+		const list = frame?.querySelector<HTMLElement>(LIST_SELECTOR);
 		const button = list?.firstElementChild;
-		if (!list || !(button instanceof HTMLElement)) return;
+		if (!frame || !list || !(button instanceof HTMLElement)) return;
 		const buttonWidth = button.getBoundingClientRect().width;
 		const style = getComputedStyle(list);
 		const room = list.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
 		if (!(buttonWidth > 0) || !(room > 0)) return;
 		const columns = Math.min(list.childElementCount, Math.max(1, Math.floor((room + 0.5) / buttonWidth)));
+		// All buttons fit on one row: the toolbar already has exactly that width.
+		if (columns >= list.childElementCount) return;
+		const left = frame.getBoundingClientRect().left;
+		document.body.addClass(FITTED_CLASS);
 		document.body.setCssProps({ [COLUMNS_PROP]: String(columns) });
+		// styles.css pins the left edge; if Obsidian positions the toolbar some other way, make up the difference.
+		const shift = left - frame.getBoundingClientRect().left;
+		if (Math.abs(shift) > 0.5) document.body.setCssProps({ [SHIFT_PROP]: `${shift}px` });
 	}
 
 	/** How far the list reaches above and below the visible rows, in pixels, from the actual layout. */
@@ -321,34 +330,48 @@ export default class UnfoldToolbarPlugin extends Plugin {
 		return { frame, above: visibleTop - listRect.top, below: listRect.bottom - (visibleTop + frame.clientHeight) };
 	}
 
-	/** Fades the edge of the rows where more buttons are out of sight, and nothing otherwise. */
+	/**
+	 * Fades the edge of the rows where more buttons are out of sight, and nothing otherwise.
+	 * Each fade is as long as what is hidden on its side, up to fadeLength, so it grows and
+	 * shrinks smoothly while the rows scroll instead of appearing at once.
+	 */
 	private updateOverflowHint(): void {
 		const rows = this.settings.overflowHint && this.isUnfolded() ? this.hiddenRows() : null;
 		const above = rows !== null && rows.above > 1;
 		const below = rows !== null && rows.below > 1;
 		document.body.toggleClass(MORE_ABOVE_CLASS, above);
 		document.body.toggleClass(MORE_BELOW_CLASS, below);
+		const fade = (hidden: number): string => `${Math.min(Math.max(hidden, 0), this.fadeLength)}px`;
 		document.body.setCssProps(
 			rows !== null && (above || below)
-				? { [MASK_TOP_PROP]: `${rows.above}px`, [MASK_HEIGHT_PROP]: `${rows.frame.clientHeight}px` }
-				: { [MASK_TOP_PROP]: "", [MASK_HEIGHT_PROP]: "" }
+				? {
+						[MASK_TOP_PROP]: `${rows.above}px`,
+						[MASK_HEIGHT_PROP]: `${rows.frame.clientHeight}px`,
+						[FADE_TOP_PROP]: fade(rows.above),
+						[FADE_BOTTOM_PROP]: fade(rows.below),
+					}
+				: { [MASK_TOP_PROP]: "", [MASK_HEIGHT_PROP]: "", [FADE_TOP_PROP]: "", [FADE_BOTTOM_PROP]: "" }
 		);
 	}
 
+	/** Keeps the fade on the rows while they scroll: one update per frame. */
 	private onFrameScroll(evt: Event): void {
 		if (!this.settings.overflowHint || !this.isUnfolded()) return;
 		if (!(evt.target instanceof Element) || !evt.target.matches(FRAME_SELECTOR)) return;
-		document.body.addClass(SCROLLING_CLASS);
-		this.hintAfterScroll();
+		if (this.hintFrame !== null) return;
+		this.hintFrame = window.requestAnimationFrame(() => {
+			this.hintFrame = null;
+			this.updateOverflowHint();
+		});
 	}
 
 	/**
-	 * "Fold when you resume typing": text typed into the note folds the toolbar. Toolbar commands
-	 * change the note without this event, so tapping them, even repeatedly, keeps it open.
+	 * Typing in the note folds the toolbar. Toolbar commands change the note without this event,
+	 * so tapping them, even repeatedly, keeps it open.
 	 * Undo and redo from the system (shake to undo) and its text formatting don't count as typing.
 	 */
 	private onBeforeInput(evt: InputEvent): void {
-		if (!this.settings.foldOnTyping || !this.isUnfolded()) return;
+		if (!this.isUnfolded()) return;
 		if (evt.inputType.startsWith("history") || evt.inputType.startsWith("format")) return;
 		if (!(evt.target instanceof Element) || !evt.target.closest(".cm-content")) return;
 		this.setUnfolded(false, true);
@@ -356,7 +379,7 @@ export default class UnfoldToolbarPlugin extends Plugin {
 
 	private onTouchStart(evt: TouchEvent): void {
 		this.swipe = null;
-		if (!this.settings.swipeToUnfold || evt.touches.length !== 1) return;
+		if (evt.touches.length !== 1) return;
 		if (!(evt.target instanceof Element) || !evt.target.closest(FRAME_SELECTOR)) return;
 		const touch = evt.touches[0];
 		const rows = this.isUnfolded() ? this.hiddenRows() : null;
@@ -401,6 +424,7 @@ export default class UnfoldToolbarPlugin extends Plugin {
 			props[`--ut-toolbar-${cssKey}`] = `${toolbarHeight + (rows - 1) * rowHeight}px`;
 		}
 		document.body.setCssProps(props);
+		this.fadeLength = rowHeight * FADE_ROWS;
 		// A new row count or theme changes the room the rows have.
 		if (this.isUnfolded()) this.layoutUnfolded();
 	}
@@ -420,10 +444,6 @@ const TEXT = {
 	},
 	rowsTablet: { name: "Tablet", desc: "Used in both orientations." },
 	experimentalHeading: "Experimental",
-	foldOnTyping: {
-		name: "Fold when you resume typing",
-		desc: "The unfolded toolbar folds back to a single row as soon as you type in the note. Tapping its buttons keeps it open.",
-	},
 	overflowHint: {
 		name: "Fade hidden rows",
 		desc: "When there are more buttons than rows, the edge where more are out of sight fades out.",
@@ -436,13 +456,9 @@ const TEXT = {
 		name: "Animate",
 		desc: "The toolbar unfolds and folds with a short motion. Skipped when your device is set to reduce motion.",
 	},
-	swipeToUnfold: {
-		name: "Swipe to unfold",
-		desc: "Swipe up on the toolbar to unfold it, and down to fold it again.",
-	},
 } as const;
 
-const EXPERIMENTAL_KEYS: ExperimentalKey[] = ["foldOnTyping", "overflowHint", "fitColumns", "animate", "swipeToUnfold"];
+const EXPERIMENTAL_KEYS: ExperimentalKey[] = ["overflowHint", "fitColumns", "animate"];
 const FLAG_KEYS: FlagKey[] = ["startFolded", ...EXPERIMENTAL_KEYS];
 const ROW_KEYS: RowsKey[] = ["rowsPhonePortrait", "rowsPhoneLandscape", "rowsTablet"];
 
