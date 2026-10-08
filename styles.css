@@ -4,10 +4,53 @@
  * --mobile-toolbar-height. Unfolding raises that variable, so the toolbar grows upward and
  * the note shrinks to match. Rows fill from the bottom up, so the folded row never moves.
  *
- * The pixel sizes (--ut-list-* and --ut-toolbar-*) are written by main.js from the settings.
- * Obsidian keeps .is-phone / .is-tablet on <body> up to date, so rotation and iPad
- * Split View are followed without any script.
+ * The pixel sizes (--ut-list-* and --ut-toolbar-*) and the button count (--ut-buttons) are
+ * written by main.js. Obsidian keeps .is-phone / .is-tablet on <body> up to date, so rotation
+ * and iPad Split View are followed without any script.
+ *
+ * The key styling (tiles, row padding) applies folded and unfolded alike: if it changed only
+ * when unfolding, the folded row would shift sideways each time.
  */
+
+body.is-mobile {
+	/* Space between the toolbar's rounded edge and the first and last button of each row. */
+	--ut-row-padding: 8px;
+	--ut-key-inset-block: 5px;
+	--ut-key-inset-inline: 3px;
+	--ut-key-radius: 10px;
+	--ut-key-background: color-mix(in srgb, var(--text-normal) 7%, transparent);
+	--ut-key-background-pressed: color-mix(in srgb, var(--text-normal) 16%, transparent);
+	--ut-unfolded-radius: 18px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Keys: every toolbar button sits on its own soft tile                */
+/* ------------------------------------------------------------------ */
+
+body.is-mobile .mobile-toolbar-options-list {
+	padding-inline: var(--ut-row-padding);
+}
+
+body.is-mobile .mobile-toolbar-options-list > .mobile-toolbar-option {
+	position: relative;
+	isolation: isolate;
+}
+
+/* Drawn inside the button's own space, so the tiles add separation without costing a column. */
+body.is-mobile .mobile-toolbar-options-list > .mobile-toolbar-option::before {
+	content: "";
+	position: absolute;
+	inset: var(--ut-key-inset-block) var(--ut-key-inset-inline);
+	z-index: -1;
+	border-radius: var(--ut-key-radius);
+	background-color: var(--ut-key-background);
+	transition: background-color 80ms ease-out;
+}
+
+body.is-mobile .mobile-toolbar-options-list > .mobile-toolbar-option:active::before,
+body.is-mobile .mobile-toolbar-options-list > .mobile-toolbar-option.mobile-tap::before {
+	background-color: var(--ut-key-background-pressed);
+}
 
 /* ------------------------------------------------------------------ */
 /* How tall the unfolded toolbar is, per screen                        */
@@ -41,9 +84,15 @@ body.is-mobile.ut-unfolded .mobile-toolbar-options-container {
 
 /* The scroll area. Column-reverse anchors it to the bottom, so any rows beyond the
    chosen height stay reachable by scrolling up. Content-box keeps Obsidian's frame
-   (borders on floating-nav themes) outside the rows, as in the folded toolbar. */
+   (borders on floating-nav themes) outside the rows, as in the folded toolbar.
+   The width is fixed to what the folded row measures (buttons × button width + padding),
+   shrinking to fit the screen, rather than left to content sizing, which Safari can keep
+   stale after a rotation. Without a button count it falls back to Obsidian's sizing. */
 body.is-mobile.ut-unfolded .mobile-toolbar-options-list-container {
 	box-sizing: content-box;
+	flex: 0 1 auto;
+	min-width: 0;
+	width: calc(var(--ut-buttons) * var(--toolbar-option-width) + 2 * var(--ut-row-padding));
 	height: var(--ut-list-height, var(--touch-size-m));
 	display: flex;
 	flex-direction: column-reverse;
@@ -51,13 +100,15 @@ body.is-mobile.ut-unfolded .mobile-toolbar-options-list-container {
 	overflow-y: auto;
 	overscroll-behavior: contain;
 	scrollbar-width: none;
+	border-radius: var(--ut-unfolded-radius);
 }
 
 body.is-mobile.ut-unfolded .mobile-toolbar-options-list-container::-webkit-scrollbar {
 	display: none;
 }
 
-/* The buttons wrap into rows; wrap-reverse stacks each new row above the previous one. */
+/* The buttons wrap into rows; wrap-reverse stacks each new row above the previous one.
+   A hairline above the bottom row marks it as the folded row; the rest are the extra rows. */
 body.is-mobile.ut-unfolded .mobile-toolbar-options-list {
 	flex: 0 0 auto;
 	height: auto;
@@ -65,6 +116,11 @@ body.is-mobile.ut-unfolded .mobile-toolbar-options-list {
 	flex-wrap: wrap-reverse;
 	align-content: flex-start;
 	overflow: visible;
+	border-radius: var(--ut-unfolded-radius);
+	background-image: linear-gradient(var(--background-modifier-border), var(--background-modifier-border));
+	background-size: calc(100% - 2 * var(--ut-row-padding) - 2 * var(--ut-key-inset-inline)) 1px;
+	background-position: center calc(100% - var(--touch-size-m));
+	background-repeat: no-repeat;
 }
 
 /* Same width as in the folded row, so every button keeps its column. */
@@ -77,8 +133,18 @@ body.is-mobile.ut-unfolded .mobile-toolbar-options-list > .mobile-toolbar-option
 /* Fold button                                                         */
 /* ------------------------------------------------------------------ */
 
-/* The chevron points up to unfold, and down (in the accent color) to fold back. */
+/* The chevron points up to unfold, and down (on an accent tile) to fold back. */
 body.is-mobile.ut-unfolded .mobile-toolbar-option svg.unfold-toolbar-chevron {
 	color: var(--text-accent);
 	transform: rotate(180deg);
+}
+
+body.is-mobile.ut-unfolded .mobile-toolbar-options-list > .mobile-toolbar-option:has(svg.unfold-toolbar-chevron)::before {
+	background-color: color-mix(in srgb, var(--interactive-accent) 22%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	body.is-mobile .mobile-toolbar-options-list > .mobile-toolbar-option::before {
+		transition: none;
+	}
 }
