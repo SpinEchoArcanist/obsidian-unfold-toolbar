@@ -5,15 +5,28 @@ interface UnfoldToolbarSettings {
 	rowsPhoneLandscape: number;
 	rowsTablet: number;
 	startFolded: boolean;
+	foldOnTyping: boolean;
+	overflowHint: boolean;
+	fitColumns: boolean;
+	animate: boolean;
+	swipeToUnfold: boolean;
 }
 
 type RowsKey = "rowsPhonePortrait" | "rowsPhoneLandscape" | "rowsTablet";
+type FlagKey = "startFolded" | ExperimentalKey;
+/** Features still being tested: off by default, listed under "Experimental" in the settings. */
+type ExperimentalKey = "foldOnTyping" | "overflowHint" | "fitColumns" | "animate" | "swipeToUnfold";
 
 const DEFAULT_SETTINGS: UnfoldToolbarSettings = {
 	rowsPhonePortrait: 4,
 	rowsPhoneLandscape: 2,
 	rowsTablet: 4,
 	startFolded: true,
+	foldOnTyping: false,
+	overflowHint: false,
+	fitColumns: false,
+	animate: false,
+	swipeToUnfold: false,
 };
 
 /** Row counts offered for each kind of screen, and the CSS variable suffix each one feeds. */
@@ -38,17 +51,56 @@ const ICON_SVG =
 
 /** Number of buttons in Obsidian's toolbar; styles.css uses it to give the unfolded toolbar a fixed width. */
 const BUTTONS_PROP = "--ut-buttons";
+/** Whole columns that fit on screen; styles.css narrows the unfolded toolbar to exactly that many. */
+const COLUMNS_PROP = "--ut-columns";
+/** Where the visible rows sit inside the scrolling list, so styles.css can fade only their edges. */
+const MASK_TOP_PROP = "--ut-mask-top";
+const MASK_HEIGHT_PROP = "--ut-mask-height";
+
+/** Set on <body> while rows are out of sight above or below the visible ones; styles.css fades that edge. */
+const MORE_ABOVE_CLASS = "ut-more-above";
+const MORE_BELOW_CLASS = "ut-more-below";
+/** Set while the rows are being scrolled: the fade waits until they come to rest. */
+const SCROLLING_CLASS = "ut-scrolling";
+/** Set for the length of the unfold and fold motion; durations match the keyframes in styles.css. */
+const UNFOLDING_CLASS = "ut-unfolding";
+const FOLDING_CLASS = "ut-folding";
+const UNFOLD_MS = 200;
+const FOLD_MS = 150;
+
+/** Obsidian's toolbar parts: the scrolling frame and the list of buttons inside it. */
+const FRAME_SELECTOR = ".mobile-toolbar-options-list-container";
+const LIST_SELECTOR = ".mobile-toolbar-options-list";
+
+/** A swipe travels at least this far vertically, mostly vertically, and quickly. */
+const SWIPE_MIN_DISTANCE = 30;
+const SWIPE_RATIO = 1.5;
+const SWIPE_MAX_MS = 700;
 
 const CSS_PROPS = [
 	...Object.values(ROW_LAYOUTS).flatMap(({ cssKey }) => [`--ut-list-${cssKey}`, `--ut-toolbar-${cssKey}`]),
 	BUTTONS_PROP,
+	COLUMNS_PROP,
+	MASK_TOP_PROP,
+	MASK_HEIGHT_PROP,
 ];
 
 export default class UnfoldToolbarPlugin extends Plugin {
 	settings: UnfoldToolbarSettings = { ...DEFAULT_SETTINGS };
 	private scrollFrame: number | null = null;
+	private motionTimer: number | null = null;
+	private swipe: { x: number; y: number; time: number; moreAbove: boolean } | null = null;
 	/** Runs once the screen has stopped resizing (a rotation fires several resize events). */
 	private readonly relayoutAfterResize = debounce(() => this.relayout(), 300, true);
+	/** Runs once the rows have stopped scrolling. */
+	private readonly hintAfterScroll = debounce(
+		() => {
+			document.body.removeClass(SCROLLING_CLASS);
+			this.updateOverflowHint();
+		},
+		150,
+		true
+	);
 
 	async onload(): Promise<void> {
 		await this.loadSettings();
@@ -67,8 +119,14 @@ export default class UnfoldToolbarPlugin extends Plugin {
 		this.applyHeights();
 		this.registerEvent(this.app.workspace.on("css-change", () => this.applyHeights()));
 		this.registerDomEvent(window, "resize", () => {
-			if (document.body.hasClass(UNFOLDED_CLASS)) this.relayoutAfterResize();
+			if (this.isUnfolded()) this.relayoutAfterResize();
 		});
+		// Listened to on the document: Obsidian rebuilds the toolbar's buttons each time it opens.
+		this.registerDomEvent(document, "beforeinput", (evt) => this.onBeforeInput(evt), { capture: true, passive: true });
+		this.registerDomEvent(document, "scroll", (evt) => this.onFrameScroll(evt), { capture: true, passive: true });
+		this.registerDomEvent(document, "touchstart", (evt) => this.onTouchStart(evt), { capture: true, passive: true });
+		this.registerDomEvent(document, "touchend", (evt) => this.onTouchEnd(evt), { capture: true, passive: false });
+		this.registerDomEvent(document, "touchcancel", () => (this.swipe = null), { capture: true, passive: true });
 
 		if (!this.settings.startFolded && this.app.loadLocalStorage(STATE_KEY) === true) {
 			document.body.addClass(UNFOLDED_CLASS);
@@ -79,7 +137,10 @@ export default class UnfoldToolbarPlugin extends Plugin {
 		const observer = new MutationObserver(() => {
 			const isOpen = document.body.hasClass(TOOLBAR_OPEN_CLASS);
 			// Obsidian rebuilds the buttons just before it opens the toolbar.
-			if (isOpen && !wasOpen) this.countButtons();
+			if (isOpen && !wasOpen) {
+				this.countButtons();
+				if (this.isUnfolded()) this.layoutUnfolded();
+			}
 			if (wasOpen && !isOpen && this.settings.startFolded) this.setUnfolded(false);
 			wasOpen = isOpen;
 		});
@@ -89,9 +150,12 @@ export default class UnfoldToolbarPlugin extends Plugin {
 
 	onunload(): void {
 		this.relayoutAfterResize.cancel();
+		this.hintAfterScroll.cancel();
 		if (this.scrollFrame !== null) window.cancelAnimationFrame(this.scrollFrame);
 		this.scrollFrame = null;
-		document.body.removeClass(UNFOLDED_CLASS);
+		if (this.motionTimer !== null) window.clearTimeout(this.motionTimer);
+		this.motionTimer = null;
+		document.body.removeClass(UNFOLDED_CLASS, UNFOLDING_CLASS, FOLDING_CLASS, MORE_ABOVE_CLASS, MORE_BELOW_CLASS, SCROLLING_CLASS);
 		document.body.setCssProps(Object.fromEntries(CSS_PROPS.map((prop) => [prop, ""])));
 		removeIcon(ICON_ID);
 	}
@@ -103,12 +167,27 @@ export default class UnfoldToolbarPlugin extends Plugin {
 			const value = Number(merged[key]);
 			return ROW_LAYOUTS[key].choices.includes(value) ? value : DEFAULT_SETTINGS[key];
 		};
+		const flag = (key: FlagKey): boolean => {
+			const value = merged[key];
+			return typeof value === "boolean" ? value : DEFAULT_SETTINGS[key];
+		};
 		this.settings = {
 			rowsPhonePortrait: rows("rowsPhonePortrait"),
 			rowsPhoneLandscape: rows("rowsPhoneLandscape"),
 			rowsTablet: rows("rowsTablet"),
-			startFolded: typeof merged.startFolded === "boolean" ? merged.startFolded : DEFAULT_SETTINGS.startFolded,
+			startFolded: flag("startFolded"),
+			foldOnTyping: flag("foldOnTyping"),
+			overflowHint: flag("overflowHint"),
+			fitColumns: flag("fitColumns"),
+			animate: flag("animate"),
+			swipeToUnfold: flag("swipeToUnfold"),
 		};
+	}
+
+	/** Settings changed on another device and arrived through sync. */
+	async onExternalSettingsChange(): Promise<void> {
+		await this.loadSettings();
+		if (Platform.isMobile) this.applyHeights();
 	}
 
 	async saveSettings(): Promise<void> {
@@ -119,11 +198,17 @@ export default class UnfoldToolbarPlugin extends Plugin {
 	/** Called when "Start folded" changes: keep or drop this device's remembered state. */
 	onStartFoldedChanged(): void {
 		if (!Platform.isMobile) return;
-		this.app.saveLocalStorage(STATE_KEY, this.settings.startFolded ? null : document.body.hasClass(UNFOLDED_CLASS));
+		this.app.saveLocalStorage(STATE_KEY, this.settings.startFolded ? null : this.isUnfolded());
 	}
 
-	private toggle(editor: Editor): void {
-		this.setUnfolded(!document.body.hasClass(UNFOLDED_CLASS));
+	/** Unfolded, and not on the way to folding. */
+	private isUnfolded(): boolean {
+		return document.body.hasClass(UNFOLDED_CLASS) && !document.body.hasClass(FOLDING_CLASS);
+	}
+
+	private toggle(editor: Editor | undefined): void {
+		this.setUnfolded(!this.isUnfolded(), true);
+		if (!editor) return;
 		// The note just got shorter or taller; keep the line being edited on screen.
 		if (this.scrollFrame !== null) window.cancelAnimationFrame(this.scrollFrame);
 		this.scrollFrame = window.requestAnimationFrame(() => {
@@ -139,18 +224,56 @@ export default class UnfoldToolbarPlugin extends Plugin {
 	 * the toolbar picked up while the screen was turning.
 	 */
 	private relayout(): void {
-		if (!document.body.hasClass(UNFOLDED_CLASS)) return;
+		if (!this.isUnfolded()) return;
 		document.body.removeClass(UNFOLDED_CLASS);
 		document.body.getBoundingClientRect();
 		document.body.addClass(UNFOLDED_CLASS);
 		const frame = document.body.querySelector(".mobile-toolbar-options-list-container");
 		if (frame) frame.scrollLeft = 0;
+		this.layoutUnfolded();
 	}
 
-	private setUnfolded(unfolded: boolean): void {
-		if (unfolded) this.countButtons();
-		document.body.toggleClass(UNFOLDED_CLASS, unfolded);
+	/** `animate` is true for the user's own fold and unfold, so only those get the motion. */
+	private setUnfolded(unfolded: boolean, animate = false): void {
+		const motion =
+			animate &&
+			this.settings.animate &&
+			unfolded !== this.isUnfolded() &&
+			!window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+		this.stopMotion();
 		if (!this.settings.startFolded) this.app.saveLocalStorage(STATE_KEY, unfolded);
+		if (unfolded) {
+			this.countButtons();
+			document.body.addClass(UNFOLDED_CLASS);
+			this.layoutUnfolded();
+			if (motion) this.startMotion(UNFOLDING_CLASS, UNFOLD_MS);
+		} else if (motion) {
+			// Stays unfolded while the rows fold away, then folds for real.
+			this.startMotion(FOLDING_CLASS, FOLD_MS, () => this.fold());
+		} else {
+			this.fold();
+		}
+	}
+
+	private fold(): void {
+		this.hintAfterScroll.cancel();
+		document.body.removeClass(UNFOLDED_CLASS, MORE_ABOVE_CLASS, MORE_BELOW_CLASS, SCROLLING_CLASS);
+	}
+
+	private startMotion(cls: string, duration: number, then?: () => void): void {
+		document.body.addClass(cls);
+		this.motionTimer = window.setTimeout(() => {
+			this.motionTimer = null;
+			document.body.removeClass(cls);
+			then?.();
+		}, duration);
+	}
+
+	/** Ends any motion at once; a fold that was under way is dropped, as the caller decides the state. */
+	private stopMotion(): void {
+		if (this.motionTimer !== null) window.clearTimeout(this.motionTimer);
+		this.motionTimer = null;
+		document.body.removeClass(UNFOLDING_CLASS, FOLDING_CLASS);
 	}
 
 	/**
@@ -161,6 +284,101 @@ export default class UnfoldToolbarPlugin extends Plugin {
 		const list = document.body.querySelector(".mobile-toolbar-options-list");
 		const count = list ? list.childElementCount : 0;
 		document.body.setCssProps({ [BUTTONS_PROP]: count > 0 ? String(count) : "" });
+	}
+
+	/** Lays out the unfolded rows: whole columns only, then the fade on hidden rows. */
+	private layoutUnfolded(): void {
+		this.snapColumns();
+		this.updateOverflowHint();
+	}
+
+	/**
+	 * Narrows the unfolded toolbar to the whole columns that fit, so no empty strip is left
+	 * at its right end. Buttons stay where they are: the rows start from the left as before.
+	 */
+	private snapColumns(): void {
+		// Measured at the width the toolbar takes without a column count: all the room there is.
+		document.body.setCssProps({ [COLUMNS_PROP]: "" });
+		if (!this.settings.fitColumns) return;
+		const list = document.body.querySelector<HTMLElement>(`${FRAME_SELECTOR} > ${LIST_SELECTOR}`);
+		const button = list?.firstElementChild;
+		if (!list || !(button instanceof HTMLElement)) return;
+		const buttonWidth = button.getBoundingClientRect().width;
+		const style = getComputedStyle(list);
+		const room = list.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+		if (!(buttonWidth > 0) || !(room > 0)) return;
+		const columns = Math.min(list.childElementCount, Math.max(1, Math.floor((room + 0.5) / buttonWidth)));
+		document.body.setCssProps({ [COLUMNS_PROP]: String(columns) });
+	}
+
+	/** How far the list reaches above and below the visible rows, in pixels, from the actual layout. */
+	private hiddenRows(): { frame: HTMLElement; above: number; below: number } | null {
+		const frame = document.body.querySelector<HTMLElement>(FRAME_SELECTOR);
+		const list = frame?.querySelector<HTMLElement>(LIST_SELECTOR);
+		if (!frame || !list) return null;
+		const visibleTop = frame.getBoundingClientRect().top + frame.clientTop;
+		const listRect = list.getBoundingClientRect();
+		return { frame, above: visibleTop - listRect.top, below: listRect.bottom - (visibleTop + frame.clientHeight) };
+	}
+
+	/** Fades the edge of the rows where more buttons are out of sight, and nothing otherwise. */
+	private updateOverflowHint(): void {
+		const rows = this.settings.overflowHint && this.isUnfolded() ? this.hiddenRows() : null;
+		const above = rows !== null && rows.above > 1;
+		const below = rows !== null && rows.below > 1;
+		document.body.toggleClass(MORE_ABOVE_CLASS, above);
+		document.body.toggleClass(MORE_BELOW_CLASS, below);
+		document.body.setCssProps(
+			rows !== null && (above || below)
+				? { [MASK_TOP_PROP]: `${rows.above}px`, [MASK_HEIGHT_PROP]: `${rows.frame.clientHeight}px` }
+				: { [MASK_TOP_PROP]: "", [MASK_HEIGHT_PROP]: "" }
+		);
+	}
+
+	private onFrameScroll(evt: Event): void {
+		if (!this.settings.overflowHint || !this.isUnfolded()) return;
+		if (!(evt.target instanceof Element) || !evt.target.matches(FRAME_SELECTOR)) return;
+		document.body.addClass(SCROLLING_CLASS);
+		this.hintAfterScroll();
+	}
+
+	/**
+	 * "Fold when you resume typing": text typed into the note folds the toolbar. Toolbar commands
+	 * change the note without this event, so tapping them, even repeatedly, keeps it open.
+	 * Undo and redo from the system (shake to undo) and its text formatting don't count as typing.
+	 */
+	private onBeforeInput(evt: InputEvent): void {
+		if (!this.settings.foldOnTyping || !this.isUnfolded()) return;
+		if (evt.inputType.startsWith("history") || evt.inputType.startsWith("format")) return;
+		if (!(evt.target instanceof Element) || !evt.target.closest(".cm-content")) return;
+		this.setUnfolded(false, true);
+	}
+
+	private onTouchStart(evt: TouchEvent): void {
+		this.swipe = null;
+		if (!this.settings.swipeToUnfold || evt.touches.length !== 1) return;
+		if (!(evt.target instanceof Element) || !evt.target.closest(FRAME_SELECTOR)) return;
+		const touch = evt.touches[0];
+		const rows = this.isUnfolded() ? this.hiddenRows() : null;
+		this.swipe = { x: touch.clientX, y: touch.clientY, time: evt.timeStamp, moreAbove: rows !== null && rows.above > 1 };
+	}
+
+	/** Swipe up unfolds. Swipe down folds, once no rows are hidden above: until then it scrolls them into view. */
+	private onTouchEnd(evt: TouchEvent): void {
+		const start = this.swipe;
+		this.swipe = null;
+		if (!start || evt.changedTouches.length !== 1) return;
+		const touch = evt.changedTouches[0];
+		const dx = touch.clientX - start.x;
+		const dy = touch.clientY - start.y;
+		if (evt.timeStamp - start.time > SWIPE_MAX_MS) return;
+		if (Math.abs(dy) < SWIPE_MIN_DISTANCE || Math.abs(dy) < SWIPE_RATIO * Math.abs(dx)) return;
+		const unfolded = this.isUnfolded();
+		const wanted = dy < 0 ? !unfolded : unfolded && !start.moreAbove;
+		if (!wanted) return;
+		// No tap on the button under the finger.
+		evt.preventDefault();
+		this.toggle(this.app.workspace.activeEditor?.editor);
 	}
 
 	/**
@@ -183,6 +401,8 @@ export default class UnfoldToolbarPlugin extends Plugin {
 			props[`--ut-toolbar-${cssKey}`] = `${toolbarHeight + (rows - 1) * rowHeight}px`;
 		}
 		document.body.setCssProps(props);
+		// A new row count or theme changes the room the rows have.
+		if (this.isUnfolded()) this.layoutUnfolded();
 	}
 }
 
@@ -199,8 +419,31 @@ const TEXT = {
 		desc: "The keyboard takes most of the screen here. Choose 1 row to keep the toolbar folded.",
 	},
 	rowsTablet: { name: "Tablet", desc: "Used in both orientations." },
+	experimentalHeading: "Experimental",
+	foldOnTyping: {
+		name: "Fold when you resume typing",
+		desc: "The unfolded toolbar folds back to a single row as soon as you type in the note. Tapping its buttons keeps it open.",
+	},
+	overflowHint: {
+		name: "Fade hidden rows",
+		desc: "When there are more buttons than rows, the edge where more are out of sight fades out.",
+	},
+	fitColumns: {
+		name: "Fit whole columns",
+		desc: "The unfolded toolbar ends right after its last column, with no empty strip.",
+	},
+	animate: {
+		name: "Animate",
+		desc: "The toolbar unfolds and folds with a short motion. Skipped when your device is set to reduce motion.",
+	},
+	swipeToUnfold: {
+		name: "Swipe to unfold",
+		desc: "Swipe up on the toolbar to unfold it, and down to fold it again.",
+	},
 } as const;
 
+const EXPERIMENTAL_KEYS: ExperimentalKey[] = ["foldOnTyping", "overflowHint", "fitColumns", "animate", "swipeToUnfold"];
+const FLAG_KEYS: FlagKey[] = ["startFolded", ...EXPERIMENTAL_KEYS];
 const ROW_KEYS: RowsKey[] = ["rowsPhonePortrait", "rowsPhoneLandscape", "rowsTablet"];
 
 class UnfoldToolbarSettingTab extends PluginSettingTab {
@@ -224,6 +467,11 @@ class UnfoldToolbarSettingTab extends PluginSettingTab {
 					control: { type: "dropdown" as const, key, options: rowOptions(key) },
 				})),
 			},
+			{
+				type: "group",
+				heading: TEXT.experimentalHeading,
+				items: EXPERIMENTAL_KEYS.map((key) => ({ ...TEXT[key], control: { type: "toggle" as const, key } })),
+			},
 		];
 	}
 
@@ -234,10 +482,10 @@ class UnfoldToolbarSettingTab extends PluginSettingTab {
 	}
 
 	async setControlValue(key: string, value: unknown): Promise<void> {
-		if (key === "startFolded") {
-			this.plugin.settings.startFolded = value === true;
+		if ((FLAG_KEYS as string[]).includes(key)) {
+			this.plugin.settings[key as FlagKey] = value === true;
 			await this.plugin.saveSettings();
-			this.plugin.onStartFoldedChanged();
+			if (key === "startFolded") this.plugin.onStartFoldedChanged();
 		} else if ((ROW_KEYS as string[]).includes(key)) {
 			this.plugin.settings[key as RowsKey] = Number(value);
 			await this.plugin.saveSettings();
@@ -249,14 +497,7 @@ class UnfoldToolbarSettingTab extends PluginSettingTab {
 		const { containerEl } = this;
 		containerEl.empty();
 
-		new Setting(containerEl)
-			.setName(TEXT.startFolded.name)
-			.setDesc(TEXT.startFolded.desc)
-			.addToggle((toggle) =>
-				toggle.setValue(this.plugin.settings.startFolded).onChange(async (value) => {
-					await this.setControlValue("startFolded", value);
-				})
-			);
+		this.addToggle(containerEl, "startFolded");
 
 		new Setting(containerEl).setName(TEXT.rowsHeading).setHeading();
 		for (const key of ROW_KEYS) {
@@ -271,6 +512,20 @@ class UnfoldToolbarSettingTab extends PluginSettingTab {
 					})
 			);
 		}
+
+		new Setting(containerEl).setName(TEXT.experimentalHeading).setHeading();
+		for (const key of EXPERIMENTAL_KEYS) this.addToggle(containerEl, key);
+	}
+
+	private addToggle(containerEl: HTMLElement, key: FlagKey): void {
+		new Setting(containerEl)
+			.setName(TEXT[key].name)
+			.setDesc(TEXT[key].desc)
+			.addToggle((toggle) =>
+				toggle.setValue(this.plugin.settings[key]).onChange(async (value) => {
+					await this.setControlValue(key, value);
+				})
+			);
 	}
 }
 

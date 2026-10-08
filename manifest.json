@@ -1,7 +1,7 @@
 {
   "id": "unfold-toolbar",
   "name": "Unfold Toolbar",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "minAppVersion": "1.8.7",
   "description": "Unfold the mobile toolbar into several rows with one button, and fold it back to a single row.",
   "author": "Simo",

@@ -52,6 +52,18 @@ Install it with [BRAT](https://github.com/TfTHacker/obsidian42-brat):
 
 If you have more shortcuts than fit in the chosen rows, the unfolded toolbar scrolls up to show them. It always starts at the bottom row.
 
+### Experimental features
+
+These features are still being tested. They are **off by default**, so they change nothing until you turn them on under *Settings → Unfold Toolbar → Experimental*. Each one may change, move to the main settings, or be removed in a later version.
+
+| Setting                     | What it does                                                                                                                                                         |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Fold when you resume typing | The unfolded toolbar folds back to a single row as soon as you type in the note. Tapping its buttons keeps it open, so you can tap undo or indent several times.      |
+| Fade hidden rows            | When there are more buttons than rows, the edge where more are out of sight fades out, so you can tell the toolbar scrolls. Nothing fades when everything fits.      |
+| Fit whole columns           | The unfolded toolbar ends right after its last column, with no empty strip at its right end. Your usual row doesn't move.                                             |
+| Animate                     | The toolbar unfolds and folds with a short motion. Skipped when your device is set to reduce motion.                                                                 |
+| Swipe to unfold             | Swipe up on the toolbar to unfold it, and down to fold it. If rows are scrolled out of sight above, the first swipe down shows them and the next one folds.           |
+
 ## Appearance
 
 The plugin also gives every toolbar button a soft rounded tile, adds a little space at the ends of each row, and uses a gentler corner radius when unfolded. These styles apply to the folded toolbar too: if they changed only when unfolding, your usual row would shift each time. Colours follow your theme in light and dark mode.
@@ -81,6 +93,10 @@ Double Row Toolbar was the closest thing I could find, and I sincerely thank the
 I thus created this plugin to have a better toolbar user experience: When the toolbar is not needed it takes up a single row, so the most useful commands are always available, but the least vertical space is taken up. Then with a button within the toolbar itself, the toolbar unfolds to 4 rows to show all the commands in one go, and make the command search easier. This unfolded vertical height can also be adapted in the settings (from 2 to 6 rows on a phone in portrait, 1 to 3 in landscape, and 2 to 8 on a tablet) to adapt it to your own number of commands.
 
 ## Changelog
+
+**0.3.0**
+- New *Experimental* section in the settings, with five features that are off by default: Fold when you resume typing, Fade hidden rows, Fit whole columns, Animate, and Swipe to unfold.
+- Settings changed on another device now apply without restarting Obsidian.
 
 **0.2.1**
 - Settings now appear in Obsidian's settings search (Obsidian 1.13 and later).

@@ -21,6 +21,12 @@ body.is-mobile {
 	--ut-key-background: color-mix(in srgb, var(--text-normal) 7%, transparent);
 	--ut-key-background-pressed: color-mix(in srgb, var(--text-normal) 16%, transparent);
 	--ut-unfolded-radius: 18px;
+	/* Fade on the edge of the rows when more buttons are out of sight: its length, and how faint the edge gets. */
+	--ut-fade: calc(var(--touch-size-m) * 0.8);
+	--ut-fade-edge: rgb(0 0 0 / 0.05);
+	/* Height of the folded frame, where the unfold motion starts and the fold motion ends. */
+	--ut-motion-start: var(--touch-size-l);
+	--ut-motion-overhang: -24px;
 }
 
 /* ------------------------------------------------------------------ */
@@ -85,14 +91,15 @@ body.is-mobile.ut-unfolded .mobile-toolbar-options-container {
 /* The scroll area. Column-reverse anchors it to the bottom, so any rows beyond the
    chosen height stay reachable by scrolling up. Content-box keeps Obsidian's frame
    (borders on floating-nav themes) outside the rows, as in the folded toolbar.
-   The width is fixed to what the folded row measures (buttons × button width + padding),
-   shrinking to fit the screen, rather than left to content sizing, which Safari can keep
-   stale after a rotation. Without a button count it falls back to Obsidian's sizing. */
+   The width is fixed to the whole columns that fit on screen (--ut-columns, measured by
+   main.js), or to what the folded row measures (buttons × button width + padding) until
+   then, shrinking to fit, rather than left to content sizing, which Safari can keep stale
+   after a rotation. Without a button count it falls back to Obsidian's sizing. */
 body.is-mobile.ut-unfolded .mobile-toolbar-options-list-container {
 	box-sizing: content-box;
 	flex: 0 1 auto;
 	min-width: 0;
-	width: calc(var(--ut-buttons) * var(--toolbar-option-width) + 2 * var(--ut-row-padding));
+	width: calc(var(--ut-columns, var(--ut-buttons)) * var(--toolbar-option-width) + 2 * var(--ut-row-padding));
 	height: var(--ut-list-height, var(--touch-size-m));
 	display: flex;
 	flex-direction: column-reverse;
@@ -130,6 +137,40 @@ body.is-mobile.ut-unfolded .mobile-toolbar-options-list > .mobile-toolbar-option
 }
 
 /* ------------------------------------------------------------------ */
+/* Rows out of sight                                                   */
+/* ------------------------------------------------------------------ */
+
+/* When more buttons than the chosen rows hold, the edge with hidden rows fades out.
+   The mask is drawn on the list, sized and placed over the visible rows by main.js, so
+   Obsidian's frame (background, border, shadow) is never faded. It is left out while the
+   rows scroll, and comes back where they settle. */
+body.is-mobile.ut-unfolded.ut-more-above {
+	--ut-fade-top: var(--ut-fade);
+}
+
+body.is-mobile.ut-unfolded.ut-more-below {
+	--ut-fade-bottom: var(--ut-fade);
+}
+
+body.is-mobile.ut-unfolded:is(.ut-more-above, .ut-more-below):not(.ut-scrolling) .mobile-toolbar-options-list {
+	--ut-fade-mask: linear-gradient(
+		to bottom,
+		var(--ut-fade-edge),
+		#000 var(--ut-fade-top, 0px),
+		#000 calc(100% - var(--ut-fade-bottom, 0px)),
+		var(--ut-fade-edge)
+	);
+	-webkit-mask-image: var(--ut-fade-mask);
+	mask-image: var(--ut-fade-mask);
+	-webkit-mask-size: 100% var(--ut-mask-height);
+	mask-size: 100% var(--ut-mask-height);
+	-webkit-mask-position: 0 var(--ut-mask-top);
+	mask-position: 0 var(--ut-mask-top);
+	-webkit-mask-repeat: no-repeat;
+	mask-repeat: no-repeat;
+}
+
+/* ------------------------------------------------------------------ */
 /* Fold button                                                         */
 /* ------------------------------------------------------------------ */
 
@@ -143,8 +184,47 @@ body.is-mobile.ut-unfolded .mobile-toolbar-options-list > .mobile-toolbar-option
 	background-color: color-mix(in srgb, var(--interactive-accent) 22%, transparent);
 }
 
+/* ------------------------------------------------------------------ */
+/* Motion ("Animate" setting)                                          */
+/* ------------------------------------------------------------------ */
+
+/* The frame is revealed upward from the folded row, and hidden back down to it. Only the
+   drawing is clipped: the toolbar's height changes at once, as without motion. The sides
+   and bottom stay open by --ut-motion-overhang so the frame's shadow is not cut. */
+@keyframes ut-unfold {
+	from {
+		clip-path: inset(calc(100% - var(--ut-motion-start)) var(--ut-motion-overhang) var(--ut-motion-overhang));
+	}
+	to {
+		clip-path: inset(var(--ut-motion-overhang));
+	}
+}
+
+@keyframes ut-fold {
+	from {
+		clip-path: inset(var(--ut-motion-overhang));
+	}
+	to {
+		clip-path: inset(calc(100% - var(--ut-motion-start)) var(--ut-motion-overhang) var(--ut-motion-overhang));
+	}
+}
+
+/* Durations match UNFOLD_MS and FOLD_MS in main.js. */
+body.is-mobile.ut-unfolding .mobile-toolbar-options-list-container {
+	animation: ut-unfold 200ms cubic-bezier(0.2, 0.9, 0.3, 1);
+}
+
+body.is-mobile.ut-folding .mobile-toolbar-options-list-container {
+	animation: ut-fold 150ms cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+
 @media (prefers-reduced-motion: reduce) {
 	body.is-mobile .mobile-toolbar-options-list > .mobile-toolbar-option::before {
 		transition: none;
+	}
+
+	body.is-mobile.ut-unfolding .mobile-toolbar-options-list-container,
+	body.is-mobile.ut-folding .mobile-toolbar-options-list-container {
+		animation: none;
 	}
 }
