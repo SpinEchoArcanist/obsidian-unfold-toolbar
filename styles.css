@@ -228,3 +228,69 @@ body.is-mobile.ut-folding .mobile-toolbar-options-list-container {
 		animation: none;
 	}
 }
+
+/* Checkbox status picker (Experimental).
+ *
+ * Each row of the list is a one-line task, built like the reading view builds one, so the theme
+ * draws its checkbox and text exactly as in a note. These rules only undo the reading view's page
+ * layout (padding, size, scrolling, the checkbox's hanging indent); colours, icons and sizes stay
+ * the theme's. The selectors are long on purpose, to outweigh the theme's own list rules.
+ */
+.ut-status-row {
+	display: flex;
+	align-items: center;
+	gap: 0.75em;
+	min-width: 13em;
+}
+
+.ut-status-row > .ut-status-preview.markdown-preview-view.markdown-rendered {
+	flex: 1 1 auto;
+	min-width: 0;
+	width: auto;
+	height: auto;
+	margin: 0;
+	padding: 0;
+	overflow: visible;
+	background: none;
+	font-family: inherit;
+	font-size: inherit;
+	line-height: inherit;
+	user-select: none;
+	pointer-events: none;
+}
+
+.ut-status-row > .ut-status-preview.markdown-rendered > ul.contains-task-list {
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.ut-status-row > .ut-status-preview.markdown-rendered > ul.contains-task-list > li.task-list-item {
+	display: flex;
+	align-items: center;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	white-space: nowrap;
+}
+
+.ut-status-row > .ut-status-preview.markdown-rendered > ul.contains-task-list > li.task-list-item > input.task-list-item-checkbox {
+	flex: none;
+	margin: 0 0.65em 0 0;
+}
+
+.ut-status-row > .ut-status-char {
+	flex: none;
+	font-family: var(--font-monospace);
+	font-size: var(--font-ui-smaller);
+	color: var(--text-faint);
+	white-space: pre;
+}
+
+/* Long press on a checkbox (Experimental): keep the system's own long-press text selection and
+ * callout off checkboxes in Live Preview, so the hold opens the status list instead. */
+body.ut-long-press .markdown-source-view.is-live-preview .cm-content input.task-list-item-checkbox {
+	-webkit-touch-callout: none;
+	-webkit-user-select: none;
+	user-select: none;
+}

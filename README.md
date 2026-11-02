@@ -61,7 +61,29 @@ If you have more shortcuts than fit in the chosen rows, the unfolded toolbar scr
 
 The settings end with an *Experimental* section. New features are released there first, **switched off**, so an update never changes how the toolbar behaves for you until you choose to try something. Once a feature has been tested, it either becomes standard behaviour or is removed, and leaves this section.
 
-Nothing is being tested at the moment, so the section only shows a short note.
+Being tested now:
+
+**Checkbox status picker** (off by default). Turning it on adds the command **Unfold Toolbar: Set checkbox status**. Add it to your toolbar under *Settings → Mobile → Toolbar*, in place of Obsidian's *Toggle checkbox status* if you like. It also works on desktop, from the command palette, a hotkey, or the note's right-click menu. On mobile, Obsidian's editor menu only opens through its *Show context menu under cursor* command; a long press in the text shows the system's copy and paste menu instead.
+
+- Tapping it opens a list of checkbox statuses, much like the list for choosing a heading level. Each row is a small task drawn by your current theme, so you see the icon and text style it will have in your note. The character in brackets on the right reads the same in every theme.
+- If your theme has no alternate checkboxes (the default theme, for example), every status except `[ ]` looks like a ticked box. That is also how it will look in the note.
+- The status you pick goes on every line your cursors or selection touch, as one undo step:
+  - a task gets its character swapped;
+  - a list item gets a checkbox;
+  - any other line becomes a task;
+  - indentation, quotes and callouts are kept.
+- If all the lines already have the status you pick, they go back to `[ ]`. The current status is ticked in the list.
+- **Remove checkbox**, at the end of the list, turns tasks back into plain list items.
+- Shown by default: `[ ]` To do, `[/]` In progress, `[x]` Done, `[-]` Cancelled, `[>]` Forwarded, `[<]` Scheduled, `[!]` Important, `[?]` Question. You can show more (Star, Quote, Location, Bookmark, Information, Savings, Idea, Pro, Con, Up, Down) or hide any of them on the *Checkbox statuses* page, which appears once the picker is on.
+- The change is plain text, like Obsidian's own toggle. Plugins such as Tasks don't add a done date or handle recurrence through it.
+
+**Long press on a checkbox** (off by default, a separate switch). In Live Preview, hold a checkbox for half a second and the same list opens right under it.
+
+- What you pick applies to that line only. Your cursor, the scroll position and the keyboard stay as they were.
+- A short tap still ticks the checkbox as usual. Moving your finger during the hold counts as a scroll, so no list opens.
+- It works without the toolbar, and with a held mouse click on desktop.
+- Reading view isn't supported yet.
+- The *Checkbox statuses* page appears when either switch is on.
 
 ## Appearance
 
@@ -79,11 +101,12 @@ Obsidian draws its mobile toolbar just above the keyboard and reserves room for 
 - The buttons wrap into rows from the bottom up, each with the same width as in the folded row, so every button keeps its column.
 - Obsidian marks the page as *phone* or *tablet* and the screen as portrait or landscape. The stylesheet picks the matching row count from that, so rotating the device or using iPad Split View needs no extra code.
 - The fold button is a normal Obsidian command, so it lives in Obsidian's own toolbar settings. The plugin never adds or removes buttons.
+- The checkbox status picker builds each row like Obsidian's reading view builds a task, with the status character in a `data-task` attribute. Themes draw alternate checkboxes from that attribute, so the list matches your theme without any extra setup.
 
 ## Limitations
 
 - The plugin relies on parts of Obsidian's mobile toolbar that are not an official API (its class names and the `--mobile-toolbar-height` value). An Obsidian update could change them. If that happens, the toolbar falls back to Obsidian's normal single row; nothing else is affected.
-- The plugin does nothing on desktop. Its settings are available there, so they can be prepared and synced to mobile.
+- Folding and unfolding do nothing on desktop. The settings are available there, so they can be prepared and synced to mobile. The checkbox status picker works on both.
 
 ## Acknowledgments
 
@@ -94,6 +117,10 @@ Double Row Toolbar was the closest thing I could find, and I sincerely thank the
 I thus created this plugin to have a better toolbar user experience: When the toolbar is not needed it takes up a single row, so the most useful commands are always available, but the least vertical space is taken up. Then with a button within the toolbar itself, the toolbar unfolds to 4 rows to show all the commands in one go, and make the command search easier. This unfolded vertical height can also be adapted in the settings (from 2 to 6 rows on a phone in portrait, 1 to 3 in landscape, and 2 to 8 on a tablet) to adapt it to your own number of commands.
 
 ## Changelog
+
+**0.4.0**
+- New, under *Experimental* and off by default: **Checkbox status picker**. The command *Set checkbox status* lists checkbox statuses as your theme draws them and applies the one you pick to the current or selected lines. A settings page lets you choose which statuses are listed. The command is also in the note's right-click menu.
+- New, under *Experimental* and off by default: **Long press on a checkbox**. In Live Preview, holding a checkbox opens the same list for its line.
 
 **0.3.2**
 - Swipe up on the toolbar to unfold it, and down to fold it.

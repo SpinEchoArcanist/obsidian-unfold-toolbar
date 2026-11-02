@@ -1,4 +1,22 @@
-import { App, Editor, Platform, Plugin, PluginSettingTab, Setting, SettingDefinitionItem, addIcon, debounce, removeIcon } from "obsidian";
+import {
+	App,
+	Editor,
+	EditorPosition,
+	MarkdownView,
+	Menu,
+	MenuPositionDef,
+	Platform,
+	Plugin,
+	PluginSettingTab,
+	Setting,
+	SettingDefinitionItem,
+	View,
+	addIcon,
+	debounce,
+	removeIcon,
+	requireApiVersion,
+} from "obsidian";
+import { EditorView } from "@codemirror/view";
 
 interface UnfoldToolbarSettings {
 	rowsPhonePortrait: number;
@@ -6,10 +24,14 @@ interface UnfoldToolbarSettings {
 	rowsTablet: number;
 	startFolded: boolean;
 	animate: boolean;
+	statusPicker: boolean;
+	statusLongPress: boolean;
+	/** Statuses the user showed or hid in the picker, by checkbox character; the others follow STATUSES. */
+	statusVisibility: Record<string, boolean>;
 }
 
 type RowsKey = "rowsPhonePortrait" | "rowsPhoneLandscape" | "rowsTablet";
-type FlagKey = "startFolded" | "animate";
+type FlagKey = "startFolded" | "animate" | "statusPicker" | "statusLongPress";
 
 const DEFAULT_SETTINGS: UnfoldToolbarSettings = {
 	rowsPhonePortrait: 4,
@@ -17,6 +39,9 @@ const DEFAULT_SETTINGS: UnfoldToolbarSettings = {
 	rowsTablet: 4,
 	startFolded: true,
 	animate: false,
+	statusPicker: false,
+	statusLongPress: false,
+	statusVisibility: {},
 };
 
 /** Row counts offered for each kind of screen, and the CSS variable suffix each one feeds. */
@@ -73,6 +98,64 @@ const SWIPE_MIN_DISTANCE = 30;
 const SWIPE_RATIO = 1.5;
 const SWIPE_MAX_MS = 700;
 
+/** A checkbox status the picker offers: its character between the brackets, its name, and whether it is listed by default. */
+interface CheckboxStatus {
+	char: string;
+	name: string;
+	shown: boolean;
+}
+
+/**
+ * The curated statuses. Shown by default: the ones most themes with alternate checkboxes draw
+ * (Border and Velocity both do). Hidden by default: the larger set themes like Border add.
+ */
+const STATUSES: readonly CheckboxStatus[] = [
+	{ char: " ", name: "To do", shown: true },
+	{ char: "/", name: "In progress", shown: true },
+	{ char: "x", name: "Done", shown: true },
+	{ char: "-", name: "Cancelled", shown: true },
+	{ char: ">", name: "Forwarded", shown: true },
+	{ char: "<", name: "Scheduled", shown: true },
+	{ char: "!", name: "Important", shown: true },
+	{ char: "?", name: "Question", shown: true },
+	{ char: "*", name: "Star", shown: false },
+	{ char: '"', name: "Quote", shown: false },
+	{ char: "l", name: "Location", shown: false },
+	{ char: "b", name: "Bookmark", shown: false },
+	{ char: "i", name: "Information", shown: false },
+	{ char: "S", name: "Savings", shown: false },
+	{ char: "I", name: "Idea", shown: false },
+	{ char: "p", name: "Pro", shown: false },
+	{ char: "c", name: "Con", shown: false },
+	{ char: "u", name: "Up", shown: false },
+	{ char: "d", name: "Down", shown: false },
+];
+
+const STATUS_COMMAND_ID = "set-checkbox-status";
+const STATUS_ICON = "list-checks";
+/** Settings control keys for the statuses: this prefix, then the checkbox character. */
+const STATUS_KEY_PREFIX = "status:";
+/** A tap on the toolbar this recent is the one that ran the command, so the picker opens above it. */
+const TAP_MAX_AGE_MS = 2000;
+
+/** A checkbox in Live Preview: the ones a long press opens the status list on. */
+const CHECKBOX_SELECTOR = ".markdown-source-view.is-live-preview .cm-content input.task-list-item-checkbox";
+/** How long a press is held, and how far it may drift, before it counts as a long press. */
+const LONG_PRESS_MS = 500;
+const LONG_PRESS_SLOP = 10;
+/** The tap that ends a long press is dropped if it comes within this time, so the checkbox doesn't also toggle. */
+const LONG_PRESS_RELEASE_MS = 2000;
+/** Set on <body> while long press is on; styles.css keeps the system's own long-press selection off checkboxes. */
+const LONG_PRESS_CLASS = "ut-long-press";
+
+/**
+ * A list item: any quote or callout prefix with the indentation (1), the marker (2) and the
+ * space after it (3), then the checkbox character (4) when the item is a task.
+ */
+const LIST_ITEM_RE = /^((?:[ \t]*>)*[ \t]*)([-*+]|\d+[.)])([ \t]+)(?:\[(.)\](?=[ \t]|$))?/u;
+/** The quote or callout prefix and indentation of any line. */
+const LINE_PREFIX_RE = /^(?:[ \t]*>)*[ \t]*/;
+
 const CSS_PROPS = [
 	...Object.values(ROW_LAYOUTS).flatMap(({ cssKey }) => [`--ut-list-${cssKey}`, `--ut-toolbar-${cssKey}`]),
 	BUTTONS_PROP,
@@ -95,10 +178,41 @@ export default class UnfoldToolbarPlugin extends Plugin {
 	private swipe: { x: number; y: number; time: number; moreAbove: boolean } | null = null;
 	/** Runs once the screen has stopped resizing (a rotation fires several resize events). */
 	private readonly relayoutAfterResize = debounce(() => this.relayout(), 300, true);
+	/** Whether the "Set checkbox status" command is registered: only while its setting is on. */
+	private statusCommandAdded = false;
+	/** Where and when the toolbar was last tapped, so the status picker opens above that button. */
+	private lastToolbarTap: { x: number; time: number } | null = null;
+	/** A press on a checkbox that may become a long press. */
+	private press: { checkbox: HTMLElement; x: number; y: number; timer: number } | null = null;
+	/** The checkbox a long press just opened the list for, whose release is dropped. */
+	private pressed: { checkbox: HTMLElement; time: number } | null = null;
 
 	async onload(): Promise<void> {
 		await this.loadSettings();
 		this.addSettingTab(new UnfoldToolbarSettingTab(this.app, this));
+		// The status picker works on desktop too, so it is set up before the mobile-only part.
+		this.syncStatusCommand();
+		this.registerEvent(
+			this.app.workspace.on("editor-menu", (menu, editor) => {
+				if (!this.settings.statusPicker) return;
+				menu.addItem((item) =>
+					item
+						.setTitle(TEXT.statusCommand)
+						.setIcon(STATUS_ICON)
+						// Opened once the editor menu has closed, so its closing doesn't take the list along.
+						.onClick(() => window.setTimeout(() => this.openStatusMenu(editor), 0))
+				);
+			})
+		);
+		this.syncLongPress();
+		// On window, ahead of the editor's own listeners, so a long press can keep the checkbox from toggling.
+		this.registerDomEvent(window, "pointerdown", (evt) => this.onPressStart(evt), { capture: true, passive: true });
+		this.registerDomEvent(window, "pointermove", (evt) => this.onPressMove(evt), { capture: true, passive: true });
+		this.registerDomEvent(window, "pointerup", () => this.cancelPress(), { capture: true, passive: true });
+		this.registerDomEvent(window, "pointercancel", () => this.cancelPress(), { capture: true, passive: true });
+		this.registerDomEvent(window, "touchend", (evt) => this.dropRelease(evt), { capture: true, passive: false });
+		this.registerDomEvent(window, "click", (evt) => this.dropRelease(evt), { capture: true });
+		this.registerDomEvent(window, "contextmenu", (evt) => this.dropRelease(evt), { capture: true });
 
 		if (!Platform.isMobile) return;
 
@@ -121,6 +235,7 @@ export default class UnfoldToolbarPlugin extends Plugin {
 		this.registerDomEvent(document, "touchstart", (evt) => this.onTouchStart(evt), { capture: true, passive: true });
 		this.registerDomEvent(document, "touchend", (evt) => this.onTouchEnd(evt), { capture: true, passive: false });
 		this.registerDomEvent(document, "touchcancel", () => (this.swipe = null), { capture: true, passive: true });
+		this.registerDomEvent(document, "pointerdown", (evt) => this.rememberToolbarTap(evt), { capture: true, passive: true });
 
 		if (!this.settings.startFolded && this.app.loadLocalStorage(STATE_KEY) === true) {
 			document.body.addClass(UNFOLDED_CLASS);
@@ -153,6 +268,8 @@ export default class UnfoldToolbarPlugin extends Plugin {
 		document.body.removeClass(UNFOLDED_CLASS, UNFOLDING_CLASS, FOLDING_CLASS, MORE_ABOVE_CLASS, MORE_BELOW_CLASS, FITTED_CLASS);
 		document.body.setCssProps(Object.fromEntries(CSS_PROPS.map((prop) => [prop, ""])));
 		removeIcon(ICON_ID);
+		this.cancelPress();
+		document.body.removeClass(LONG_PRESS_CLASS);
 	}
 
 	async loadSettings(): Promise<void> {
@@ -166,19 +283,193 @@ export default class UnfoldToolbarPlugin extends Plugin {
 			const value = merged[key];
 			return typeof value === "boolean" ? value : DEFAULT_SETTINGS[key];
 		};
+		// Only known statuses with a true/false value are kept.
+		const statusVisibility: Record<string, boolean> = {};
+		const storedVisibility: unknown = merged.statusVisibility;
+		if (storedVisibility !== null && typeof storedVisibility === "object") {
+			for (const { char } of STATUSES) {
+				const value = (storedVisibility as Record<string, unknown>)[char];
+				if (typeof value === "boolean") statusVisibility[char] = value;
+			}
+		}
 		this.settings = {
 			rowsPhonePortrait: rows("rowsPhonePortrait"),
 			rowsPhoneLandscape: rows("rowsPhoneLandscape"),
 			rowsTablet: rows("rowsTablet"),
 			startFolded: flag("startFolded"),
 			animate: flag("animate"),
+			statusPicker: flag("statusPicker"),
+			statusLongPress: flag("statusLongPress"),
+			statusVisibility,
 		};
 	}
 
 	/** Settings changed on another device and arrived through sync. */
 	async onExternalSettingsChange(): Promise<void> {
 		await this.loadSettings();
+		this.syncStatusCommand();
+		this.syncLongPress();
 		if (Platform.isMobile) this.applyHeights();
+	}
+
+	/** Registers or removes the "Set checkbox status" command to match its setting. */
+	syncStatusCommand(): void {
+		const wanted = this.settings.statusPicker;
+		if (wanted === this.statusCommandAdded) return;
+		if (wanted) {
+			this.addCommand({
+				id: STATUS_COMMAND_ID,
+				name: TEXT.statusCommand,
+				icon: STATUS_ICON,
+				editorCallback: (editor) => this.openStatusMenu(editor),
+			});
+		} else {
+			this.removeCommand(STATUS_COMMAND_ID);
+		}
+		this.statusCommandAdded = wanted;
+	}
+
+	/** The status list is in use, through the command or the long press, so its statuses can be chosen. */
+	usesStatusList(): boolean {
+		return this.settings.statusPicker || this.settings.statusLongPress;
+	}
+
+	isStatusShown(status: CheckboxStatus): boolean {
+		return this.settings.statusVisibility[status.char] ?? status.shown;
+	}
+
+	/**
+	 * Lists the shown statuses, each drawn by the theme, with the lines' current status ticked.
+	 * The list applies to every line the cursors or selections touch, or, after a long press,
+	 * to the pressed checkbox's line only.
+	 */
+	private openStatusMenu(editor: Editor, pressed?: { line: number; position: MenuPositionDef }): void {
+		const lines = pressed ? [pressed.line] : targetLines(editor);
+		const texts = lines.map((line) => editor.getLine(line));
+		const current = commonStatus(texts);
+		const menu = new Menu().setNoIcon().setUseNativeMenu(false);
+		for (const status of STATUSES) {
+			if (!this.isStatusShown(status)) continue;
+			menu.addItem((item) => {
+				item.setTitle(statusTitle(status)).onClick(() => this.applyStatus(editor, lines, status.char, !pressed));
+				if (status.char === current) item.setChecked(true);
+			});
+		}
+		menu.addSeparator();
+		menu.addItem((item) =>
+			item
+				.setTitle(TEXT.removeCheckbox)
+				.setDisabled(!texts.some((text) => taskChar(text) !== null))
+				.onClick(() => this.applyStatus(editor, lines, null, !pressed))
+		);
+		menu.showAtPosition(pressed ? pressed.position : this.statusMenuPosition());
+	}
+
+	/** On mobile, just above the toolbar button that was tapped; otherwise at the cursor. */
+	private statusMenuPosition(): MenuPositionDef {
+		const frame = document.body.hasClass(TOOLBAR_OPEN_CLASS) ? document.body.querySelector<HTMLElement>(FRAME_SELECTOR) : null;
+		if (frame) {
+			const rect = frame.getBoundingClientRect();
+			const tap = this.lastToolbarTap;
+			const recent = tap !== null && Date.now() - tap.time < TAP_MAX_AGE_MS;
+			return { x: recent ? tap.x : rect.left, y: rect.top };
+		}
+		const selection = activeWindow.getSelection();
+		if (selection && selection.rangeCount > 0) {
+			const rect = selection.getRangeAt(0).getBoundingClientRect();
+			if (rect.bottom > 0 || rect.left > 0) return { x: rect.left, y: rect.bottom };
+		}
+		return { x: activeWindow.innerWidth / 2, y: activeWindow.innerHeight / 3 };
+	}
+
+	/**
+	 * Gives the lines the checkbox `char`, or removes their checkbox when `char` is null, in one undo step.
+	 * Picking the status all the lines already have turns them back to "[ ]".
+	 * `atCursor` is true when the lines came from the cursors: they are kept in place and the note
+	 * gets the focus back. After a long press it is false, so the cursor, the scroll position and
+	 * the keyboard (hidden or shown) are left as they were.
+	 */
+	private applyStatus(editor: Editor, lines: number[], char: string | null, atCursor: boolean): void {
+		const texts = lines.map((line) => editor.getLine(line));
+		const target = char !== null && char !== " " && commonStatus(texts) === char ? " " : char;
+		const edits: LineEditAt[] = [];
+		lines.forEach((line, i) => {
+			const edit = checkboxEdit(texts[i], target);
+			if (edit) edits.push({ line, ...edit });
+		});
+		if (edits.length > 0) {
+			const selections = editor
+				.listSelections()
+				.map(({ anchor, head }) => ({ anchor: mapPosition(anchor, edits), head: mapPosition(head, edits) }));
+			editor.transaction({
+				changes: edits.map(({ line, from, to, insert }) => ({ from: { line, ch: from }, to: { line, ch: to }, text: insert })),
+			});
+			if (atCursor) editor.setSelections(selections);
+		}
+		if (atCursor) editor.focus();
+	}
+
+	/** Long press is listened for only while its setting is on; styles.css follows the body class. */
+	syncLongPress(): void {
+		if (!this.settings.statusLongPress) this.cancelPress();
+		document.body.toggleClass(LONG_PRESS_CLASS, this.settings.statusLongPress);
+	}
+
+	private onPressStart(evt: PointerEvent): void {
+		this.cancelPress();
+		if (!this.settings.statusLongPress || !evt.isPrimary) return;
+		if (evt.pointerType === "mouse" && evt.button !== 0) return;
+		const checkbox = evt.target instanceof Element ? evt.target.closest<HTMLElement>(CHECKBOX_SELECTOR) : null;
+		if (!checkbox) return;
+		const timer = window.setTimeout(() => this.onLongPress(), LONG_PRESS_MS);
+		this.press = { checkbox, x: evt.clientX, y: evt.clientY, timer };
+	}
+
+	/** A press that drifts is a scroll or a drag, not a long press. */
+	private onPressMove(evt: PointerEvent): void {
+		const press = this.press;
+		if (!press || !evt.isPrimary) return;
+		if (Math.hypot(evt.clientX - press.x, evt.clientY - press.y) > LONG_PRESS_SLOP) this.cancelPress();
+	}
+
+	private cancelPress(): void {
+		if (this.press) window.clearTimeout(this.press.timer);
+		this.press = null;
+	}
+
+	/** Opens the status list under the held checkbox, for its line only. */
+	private onLongPress(): void {
+		const press = this.press;
+		this.press = null;
+		if (!press || !press.checkbox.isConnected) return;
+		const located = locateCheckbox(this.app.workspace.getLeavesOfType("markdown").map((leaf) => leaf.view), press.checkbox);
+		if (!located) return;
+		this.pressed = { checkbox: press.checkbox, time: Date.now() };
+		const rect = press.checkbox.getBoundingClientRect();
+		this.openStatusMenu(located.editor, { line: located.line, position: { x: rect.left, y: rect.bottom } });
+	}
+
+	/**
+	 * The release of a long press would toggle the checkbox, and on some systems open their own menu:
+	 * both are dropped. Only for the pressed checkbox, so taps on the status list go through.
+	 */
+	private dropRelease(evt: Event): void {
+		const pressed = this.pressed;
+		if (!pressed) return;
+		if (Date.now() - pressed.time > LONG_PRESS_RELEASE_MS) {
+			this.pressed = null;
+			return;
+		}
+		if (!(evt.target instanceof Node) || !pressed.checkbox.contains(evt.target)) return;
+		evt.preventDefault();
+		evt.stopImmediatePropagation();
+		// The release ends with the click, or with the touch end when that stops the click from coming.
+		if (evt.type === "click" || evt.type === "touchend") this.pressed = null;
+	}
+
+	private rememberToolbarTap(evt: PointerEvent): void {
+		if (!(evt.target instanceof Element) || !evt.target.closest(FRAME_SELECTOR)) return;
+		this.lastToolbarTap = { x: evt.clientX, time: Date.now() };
 	}
 
 	async saveSettings(): Promise<void> {
@@ -444,10 +735,24 @@ const TEXT = {
 		desc: "New features appear here first, switched off, while they are being tested. Once tested, they become standard or are removed.",
 		empty: " Nothing is being tested at the moment.",
 	},
+	statusPicker: {
+		name: "Checkbox status picker",
+		desc: 'Adds the command "Set checkbox status", also to the editor\'s context menu. It lists checkbox statuses as your theme draws them and applies the one you pick to the current line or the selected lines. Also works on desktop.',
+	},
+	statusLongPress: {
+		name: "Long press on a checkbox",
+		desc: "In Live Preview, holding a checkbox opens the list of checkbox statuses for its line. A short tap still ticks it as usual.",
+	},
+	statuses: {
+		name: "Checkbox statuses",
+		desc: "Choose which statuses the list shows. How each one looks depends on your theme.",
+	},
+	statusCommand: "Set checkbox status",
+	removeCheckbox: "Remove checkbox",
 } as const;
 
-/** Features still being tested: off by default, listed under "Experimental" in the settings. None at the moment. */
-const EXPERIMENTAL_KEYS: FlagKey[] = [];
+/** Features still being tested: off by default, listed under "Experimental" in the settings. */
+const EXPERIMENTAL_KEYS: FlagKey[] = ["statusPicker", "statusLongPress"];
 const FLAG_KEYS: FlagKey[] = ["startFolded", "animate", ...EXPERIMENTAL_KEYS];
 /** The Experimental section's explanation, which also says when nothing is being tested. */
 const EXPERIMENTAL_NOTE = {
@@ -484,6 +789,21 @@ class UnfoldToolbarSettingTab extends PluginSettingTab {
 				items: [
 					{ ...EXPERIMENTAL_NOTE, searchable: false },
 					...EXPERIMENTAL_KEYS.map((key) => ({ ...TEXT[key], control: { type: "toggle" as const, key } })),
+					{
+						type: "page",
+						...TEXT.statuses,
+						visible: () => this.plugin.usesStatusList(),
+						items: [
+							{
+								type: "group",
+								items: STATUSES.map((status) => ({
+									name: status.name,
+									desc: `[${status.char}]`,
+									control: { type: "toggle" as const, key: STATUS_KEY_PREFIX + status.char },
+								})),
+							},
+						],
+					},
 				],
 			},
 		];
@@ -491,15 +811,28 @@ class UnfoldToolbarSettingTab extends PluginSettingTab {
 
 	/** Dropdowns store strings; the plugin keeps numbers. */
 	getControlValue(key: string): unknown {
+		const status = statusForKey(key);
+		if (status) return this.plugin.isStatusShown(status);
 		const value = this.plugin.settings[key as keyof UnfoldToolbarSettings];
 		return typeof value === "number" ? String(value) : value;
 	}
 
 	async setControlValue(key: string, value: unknown): Promise<void> {
-		if ((FLAG_KEYS as string[]).includes(key)) {
+		const status = statusForKey(key);
+		if (status) {
+			this.plugin.settings.statusVisibility[status.char] = value === true;
+			await this.plugin.saveSettings();
+		} else if ((FLAG_KEYS as string[]).includes(key)) {
 			this.plugin.settings[key as FlagKey] = value === true;
 			await this.plugin.saveSettings();
 			if (key === "startFolded") this.plugin.onStartFoldedChanged();
+			if (key === "statusPicker" || key === "statusLongPress") {
+				this.plugin.syncStatusCommand();
+				this.plugin.syncLongPress();
+				// The list of statuses shows only while the picker is on.
+				if (requireApiVersion("1.13.0")) this.refreshDomState();
+				else this.renderByHand();
+			}
 		} else if ((ROW_KEYS as string[]).includes(key)) {
 			this.plugin.settings[key as RowsKey] = Number(value);
 			await this.plugin.saveSettings();
@@ -508,6 +841,10 @@ class UnfoldToolbarSettingTab extends PluginSettingTab {
 
 	/** Obsidian 1.8.7 to 1.12: the same settings, built by hand. */
 	display(): void {
+		this.renderByHand();
+	}
+
+	private renderByHand(): void {
 		const { containerEl } = this;
 		containerEl.empty();
 
@@ -531,6 +868,19 @@ class UnfoldToolbarSettingTab extends PluginSettingTab {
 		new Setting(containerEl).setName(TEXT.experimentalHeading).setHeading();
 		new Setting(containerEl).setName(EXPERIMENTAL_NOTE.name).setDesc(EXPERIMENTAL_NOTE.desc);
 		for (const key of EXPERIMENTAL_KEYS) this.addToggle(containerEl, key);
+
+		if (!this.plugin.usesStatusList()) return;
+		new Setting(containerEl).setName(TEXT.statuses.name).setDesc(TEXT.statuses.desc).setHeading();
+		for (const status of STATUSES) {
+			new Setting(containerEl)
+				.setName(status.name)
+				.setDesc(`[${status.char}]`)
+				.addToggle((toggle) =>
+					toggle.setValue(this.plugin.isStatusShown(status)).onChange(async (value) => {
+						await this.setControlValue(STATUS_KEY_PREFIX + status.char, value);
+					})
+				);
+		}
 	}
 
 	private addToggle(containerEl: HTMLElement, key: FlagKey): void {
@@ -549,4 +899,108 @@ function rowOptions(key: RowsKey): Record<string, string> {
 	const options: Record<string, string> = {};
 	for (const rows of ROW_LAYOUTS[key].choices) options[String(rows)] = rows === 1 ? "1 row" : `${rows} rows`;
 	return options;
+}
+
+function statusForKey(key: string): CheckboxStatus | undefined {
+	if (!key.startsWith(STATUS_KEY_PREFIX)) return undefined;
+	const char = key.slice(STATUS_KEY_PREFIX.length);
+	return STATUSES.find((status) => status.char === char);
+}
+
+/** One change within a line: characters from..to replaced by insert. */
+interface LineEdit {
+	from: number;
+	to: number;
+	insert: string;
+}
+type LineEditAt = LineEdit & { line: number };
+
+/** The checkbox character of a task line, or null when the line is not a task. */
+function taskChar(text: string): string | null {
+	return LIST_ITEM_RE.exec(text)?.[4] ?? null;
+}
+
+/** The status every line shares, or null when they differ or one of them is not a task. */
+function commonStatus(texts: string[]): string | null {
+	const first = texts.length > 0 ? taskChar(texts[0]) : null;
+	return first !== null && texts.every((text) => taskChar(text) === first) ? first : null;
+}
+
+/**
+ * The change that gives a line the checkbox `char`, or removes its checkbox when `char` is null;
+ * null when nothing changes. A task gets its character replaced, a list item gets a checkbox,
+ * and any other line becomes a task. Indentation and quote or callout prefixes are kept.
+ */
+function checkboxEdit(text: string, char: string | null): LineEdit | null {
+	const match = LIST_ITEM_RE.exec(text);
+	if (match) {
+		const at = match[1].length + match[2].length + match[3].length;
+		const current = match[4];
+		if (current !== undefined) {
+			const end = at + current.length + 2;
+			// Removing takes the space after the checkbox along, so "- [x] a" becomes "- a".
+			if (char === null) return { from: at, to: Math.min(text.length, end + 1), insert: "" };
+			return current === char ? null : { from: at + 1, to: at + 1 + current.length, insert: char };
+		}
+		return char === null ? null : { from: at, to: at, insert: `[${char}] ` };
+	}
+	if (char === null) return null;
+	const at = LINE_PREFIX_RE.exec(text)?.[0].length ?? 0;
+	return { from: at, to: at, insert: `- [${char}] ` };
+}
+
+/** Where a cursor ends up once its line is edited: text inserted at or before it pushes it along. */
+function mapPosition(pos: EditorPosition, edits: LineEditAt[]): EditorPosition {
+	const edit = edits.find(({ line }) => line === pos.line);
+	if (!edit || pos.ch < edit.from) return pos;
+	if (pos.ch >= edit.to) return { line: pos.line, ch: pos.ch + edit.insert.length - (edit.to - edit.from) };
+	return { line: pos.line, ch: edit.from + edit.insert.length };
+}
+
+/**
+ * The editor and line of a checkbox in Live Preview. CodeMirror finds the position of its own
+ * DOM; the note's view, whose editor changes the text, is the one that contains the checkbox.
+ */
+function locateCheckbox(views: View[], checkbox: HTMLElement): { editor: Editor; line: number } | null {
+	const editorEl = checkbox.closest<HTMLElement>(".cm-editor");
+	const cm = editorEl ? EditorView.findFromDOM(editorEl) : null;
+	const view = views.find((candidate): candidate is MarkdownView => candidate instanceof MarkdownView && candidate.containerEl.contains(checkbox));
+	if (!cm || !view) return null;
+	return { editor: view.editor, line: cm.state.doc.lineAt(cm.posAtDOM(checkbox)).number - 1 };
+}
+
+/** Every line a cursor or selection touches, once each; a selection ending at the start of a line leaves that line out. */
+function targetLines(editor: Editor): number[] {
+	const lines = new Set<number>();
+	for (const { anchor, head } of editor.listSelections()) {
+		const [start, end] = anchor.line < head.line || (anchor.line === head.line && anchor.ch <= head.ch) ? [anchor, head] : [head, anchor];
+		const last = end.line > start.line && end.ch === 0 ? end.line - 1 : end.line;
+		for (let line = start.line; line <= last; line++) lines.add(line);
+	}
+	return [...lines].sort((a, b) => a - b);
+}
+
+/**
+ * A picker row: the status as a one-line task, built like the reading view builds one
+ * (data-task on the item and its checkbox), so the theme draws both the box and the text,
+ * then the character itself, which reads the same in every theme.
+ */
+function statusTitle(status: CheckboxStatus): DocumentFragment {
+	const checked = status.char !== " ";
+	return createFragment((fragment) => {
+		const row = fragment.createSpan({ cls: "ut-status-row" });
+		// A picture of a task, not a control: no focus, no taps (they go to the menu item).
+		const preview = row.createDiv({ cls: ["ut-status-preview", "markdown-preview-view", "markdown-rendered"], attr: { inert: "" } });
+		const item = preview
+			.createEl("ul", { cls: "contains-task-list" })
+			.createEl("li", { cls: checked ? ["task-list-item", "is-checked"] : "task-list-item", attr: { "data-task": status.char } });
+		const box = item.createEl("input", {
+			type: "checkbox",
+			cls: "task-list-item-checkbox",
+			attr: { "data-task": status.char, tabindex: "-1", "aria-hidden": "true" },
+		});
+		box.checked = checked;
+		item.appendText(status.name);
+		row.createSpan({ cls: "ut-status-char", text: `[${status.char}]` });
+	});
 }
