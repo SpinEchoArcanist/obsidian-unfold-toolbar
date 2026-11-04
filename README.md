@@ -50,7 +50,6 @@ Install it with [BRAT](https://github.com/TfTHacker/obsidian42-brat):
 | Setting          | Default | Choices  | Notes                                                                                                                                       |
 | ---------------- | ------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
 | Start folded     | On      | On / Off | On: the toolbar opens as a single row each time you start editing. Off: it stays as you left it, remembered separately on each device.      |
-| Animate          | Off     | On / Off | The toolbar unfolds and folds with a short motion (150 ms to unfold, 110 ms to fold). Skipped when your device is set to reduce motion.     |
 | Phone, portrait  | 4 rows  | 2–6      | Select how many rows are applied when the toolbar is unfolded. More rows let you see more commands, but take up more screen space. |
 | Phone, landscape | 2 rows  | 1–3      | The keyboard takes most of the screen in landscape. 1 row keeps the toolbar folded.                                                         |
 | Tablet           | 4 rows  | 2–8      | Used in both orientations.                                                                                                                  |
@@ -117,6 +116,11 @@ Double Row Toolbar was the closest thing I could find, and I sincerely thank the
 I thus created this plugin to have a better toolbar user experience: When the toolbar is not needed it takes up a single row, so the most useful commands are always available, but the least vertical space is taken up. Then with a button within the toolbar itself, the toolbar unfolds to 4 rows to show all the commands in one go, and make the command search easier. This unfolded vertical height can also be adapted in the settings (from 2 to 6 rows on a phone in portrait, 1 to 3 in landscape, and 2 to 8 on a tablet) to adapt it to your own number of commands.
 
 ## Changelog
+
+**0.4.1**
+- The fold button's accent tile no longer uses the CSS `:has()` selector, which the community review flags for performance. It looks the same.
+- The *Animate* setting and its motion are removed. Its `clip-path` animation was flagged by the community review. The toolbar now always unfolds and folds at once, as it did with *Animate* off (the default).
+- Releases are now published by a GitHub workflow that names them after the version and attests the release files.
 
 **0.4.0**
 - New, under *Experimental* and off by default: **Checkbox status picker**. The command *Set checkbox status* lists checkbox statuses as your theme draws them and applies the one you pick to the current or selected lines. A settings page lets you choose which statuses are listed. The command is also in the note's right-click menu.

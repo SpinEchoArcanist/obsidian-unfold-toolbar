@@ -1,0 +1,63 @@
+# Publishes a release of the version in manifest.json, from the latest commit on the branch.
+# Run it from the Actions tab: "Release" → "Run workflow".
+#
+# It checks that manifest.json and the main.js header carry the same version, creates the tag
+# on this commit, names the release after the version, attaches main.js, manifest.json and
+# styles.css, and attests them, so anyone can verify they come from this repository.
+name: Release
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the tag and the release
+      id-token: write # sign the attestation
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - name: Check out
+        uses: actions/checkout@v5
+
+      - name: Check the version
+        id: version
+        run: |
+          version=$(jq -r .version manifest.json)
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error file=manifest.json::Version '$version' is not major.minor.patch."
+            exit 1
+          fi
+          if ! sed -n 2p main.js | grep -qF "v$version"; then
+            echo "::error file=main.js::The main.js header says '$(sed -n 2p main.js)', not v$version."
+            exit 1
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/$version" > /dev/null; then
+            echo "::error::Tag $version already exists. Bump the version in manifest.json and main.js first."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Attest the release files
+        uses: actions/attest@v4
+        with:
+          subject-path: |
+            main.js
+            manifest.json
+            styles.css
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          # Release notes: this version's entry in the README changelog.
+          awk -v heading="**$VERSION**" '$0 == heading { found = 1; next } found && /^\*\*[0-9]/ { exit } found' README.md > notes.md
+          if ! grep -q '[^[:space:]]' notes.md; then echo "Release $VERSION" > notes.md; fi
+          gh release create "$VERSION" main.js manifest.json styles.css \
+            --target "$GITHUB_SHA" \
+            --title "$VERSION" \
+            --notes-file notes.md

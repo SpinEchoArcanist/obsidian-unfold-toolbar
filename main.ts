@@ -23,7 +23,6 @@ interface UnfoldToolbarSettings {
 	rowsPhoneLandscape: number;
 	rowsTablet: number;
 	startFolded: boolean;
-	animate: boolean;
 	statusPicker: boolean;
 	statusLongPress: boolean;
 	/** Statuses the user showed or hid in the picker, by checkbox character; the others follow STATUSES. */
@@ -31,14 +30,13 @@ interface UnfoldToolbarSettings {
 }
 
 type RowsKey = "rowsPhonePortrait" | "rowsPhoneLandscape" | "rowsTablet";
-type FlagKey = "startFolded" | "animate" | "statusPicker" | "statusLongPress";
+type FlagKey = "startFolded" | "statusPicker" | "statusLongPress";
 
 const DEFAULT_SETTINGS: UnfoldToolbarSettings = {
 	rowsPhonePortrait: 4,
 	rowsPhoneLandscape: 2,
 	rowsTablet: 4,
 	startFolded: true,
-	animate: false,
 	statusPicker: false,
 	statusLongPress: false,
 	statusVisibility: {},
@@ -61,6 +59,8 @@ const STATE_KEY = "unfold-toolbar-unfolded";
 /** Own icon id, so styles.css can flip exactly this button and nothing else. */
 const ICON_ID = "unfold-toolbar-chevron";
 /** Lucide's chevron-up geometry nested in a 24-unit box, so it inherits the theme's icon stroke like built-in icons. */
+/** Set on the toolbar button that holds ICON_ID, for its accent tile while unfolded. */
+const FOLD_BUTTON_CLASS = "ut-fold-button";
 const ICON_SVG =
 	'<svg x="0" y="0" width="100" height="100" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m6 15 6-6 6 6"/></svg>';
 
@@ -83,11 +83,6 @@ const MORE_ABOVE_CLASS = "ut-more-above";
 const MORE_BELOW_CLASS = "ut-more-below";
 /** Set on <body> while the unfolded toolbar is narrowed to whole columns; styles.css pins its left edge. */
 const FITTED_CLASS = "ut-fitted";
-/** Set for the length of the unfold and fold motion; durations match the keyframes in styles.css. */
-const UNFOLDING_CLASS = "ut-unfolding";
-const FOLDING_CLASS = "ut-folding";
-const UNFOLD_MS = 150;
-const FOLD_MS = 110;
 
 /** Obsidian's toolbar parts: the scrolling frame and the list of buttons inside it. */
 const FRAME_SELECTOR = ".mobile-toolbar-options-list-container";
@@ -170,7 +165,6 @@ const CSS_PROPS = [
 export default class UnfoldToolbarPlugin extends Plugin {
 	settings: UnfoldToolbarSettings = { ...DEFAULT_SETTINGS };
 	private scrollFrame: number | null = null;
-	private motionTimer: number | null = null;
 	/** The fade's next update while the rows scroll, at most one per frame. */
 	private hintFrame: number | null = null;
 	/** Full length of the fade in pixels; set from the theme's row height in applyHeights(). */
@@ -248,12 +242,15 @@ export default class UnfoldToolbarPlugin extends Plugin {
 			// Obsidian rebuilds the buttons just before it opens the toolbar.
 			if (isOpen && !wasOpen) {
 				this.countButtons();
+				this.markFoldButton();
 				if (this.isUnfolded()) this.layoutUnfolded();
 			}
 			if (wasOpen && !isOpen && this.settings.startFolded) this.setUnfolded(false);
 			wasOpen = isOpen;
 		});
 		observer.observe(document.body, { attributes: true, attributeFilter: ["class"] });
+		// The toolbar may already be open when the plugin starts.
+		this.markFoldButton();
 		this.register(() => observer.disconnect());
 	}
 
@@ -263,11 +260,10 @@ export default class UnfoldToolbarPlugin extends Plugin {
 		this.scrollFrame = null;
 		if (this.hintFrame !== null) window.cancelAnimationFrame(this.hintFrame);
 		this.hintFrame = null;
-		if (this.motionTimer !== null) window.clearTimeout(this.motionTimer);
-		this.motionTimer = null;
-		document.body.removeClass(UNFOLDED_CLASS, UNFOLDING_CLASS, FOLDING_CLASS, MORE_ABOVE_CLASS, MORE_BELOW_CLASS, FITTED_CLASS);
+		document.body.removeClass(UNFOLDED_CLASS, MORE_ABOVE_CLASS, MORE_BELOW_CLASS, FITTED_CLASS);
 		document.body.setCssProps(Object.fromEntries(CSS_PROPS.map((prop) => [prop, ""])));
 		removeIcon(ICON_ID);
+		document.body.querySelectorAll(`.${FOLD_BUTTON_CLASS}`).forEach((button) => button.removeClass(FOLD_BUTTON_CLASS));
 		this.cancelPress();
 		document.body.removeClass(LONG_PRESS_CLASS);
 	}
@@ -297,7 +293,6 @@ export default class UnfoldToolbarPlugin extends Plugin {
 			rowsPhoneLandscape: rows("rowsPhoneLandscape"),
 			rowsTablet: rows("rowsTablet"),
 			startFolded: flag("startFolded"),
-			animate: flag("animate"),
 			statusPicker: flag("statusPicker"),
 			statusLongPress: flag("statusLongPress"),
 			statusVisibility,
@@ -483,13 +478,12 @@ export default class UnfoldToolbarPlugin extends Plugin {
 		this.app.saveLocalStorage(STATE_KEY, this.settings.startFolded ? null : this.isUnfolded());
 	}
 
-	/** Unfolded, and not on the way to folding. */
 	private isUnfolded(): boolean {
-		return document.body.hasClass(UNFOLDED_CLASS) && !document.body.hasClass(FOLDING_CLASS);
+		return document.body.hasClass(UNFOLDED_CLASS);
 	}
 
 	private toggle(editor: Editor | undefined): void {
-		this.setUnfolded(!this.isUnfolded(), true);
+		this.setUnfolded(!this.isUnfolded());
 		if (!editor) return;
 		// The note just got shorter or taller; keep the line being edited on screen.
 		if (this.scrollFrame !== null) window.cancelAnimationFrame(this.scrollFrame);
@@ -515,23 +509,13 @@ export default class UnfoldToolbarPlugin extends Plugin {
 		this.layoutUnfolded();
 	}
 
-	/** `animate` is true for the user's own fold and unfold, so only those get the motion. */
-	private setUnfolded(unfolded: boolean, animate = false): void {
-		const motion =
-			animate &&
-			this.settings.animate &&
-			unfolded !== this.isUnfolded() &&
-			!window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-		this.stopMotion();
+	private setUnfolded(unfolded: boolean): void {
 		if (!this.settings.startFolded) this.app.saveLocalStorage(STATE_KEY, unfolded);
 		if (unfolded) {
 			this.countButtons();
+			this.markFoldButton();
 			document.body.addClass(UNFOLDED_CLASS);
 			this.layoutUnfolded();
-			if (motion) this.startMotion(UNFOLDING_CLASS, UNFOLD_MS);
-		} else if (motion) {
-			// Stays unfolded while the rows fold away, then folds for real.
-			this.startMotion(FOLDING_CLASS, FOLD_MS, () => this.fold());
 		} else {
 			this.fold();
 		}
@@ -543,22 +527,6 @@ export default class UnfoldToolbarPlugin extends Plugin {
 		document.body.removeClass(UNFOLDED_CLASS, MORE_ABOVE_CLASS, MORE_BELOW_CLASS, FITTED_CLASS);
 	}
 
-	private startMotion(cls: string, duration: number, then?: () => void): void {
-		document.body.addClass(cls);
-		this.motionTimer = window.setTimeout(() => {
-			this.motionTimer = null;
-			document.body.removeClass(cls);
-			then?.();
-		}, duration);
-	}
-
-	/** Ends any motion at once; a fold that was under way is dropped, as the caller decides the state. */
-	private stopMotion(): void {
-		if (this.motionTimer !== null) window.clearTimeout(this.motionTimer);
-		this.motionTimer = null;
-		document.body.removeClass(UNFOLDING_CLASS, FOLDING_CLASS);
-	}
-
 	/**
 	 * The unfolded toolbar gets the same width the folded one has (buttons × button width),
 	 * set explicitly: a content-sized width can be left stale after rotating the screen.
@@ -567,6 +535,15 @@ export default class UnfoldToolbarPlugin extends Plugin {
 		const list = document.body.querySelector(".mobile-toolbar-options-list");
 		const count = list ? list.childElementCount : 0;
 		document.body.setCssProps({ [BUTTONS_PROP]: count > 0 ? String(count) : "" });
+	}
+
+	/**
+	 * Marks the button that holds the fold icon, so styles.css can give it the accent tile while
+	 * unfolded. Done each time Obsidian rebuilds the buttons, as the mark goes with them.
+	 */
+	private markFoldButton(): void {
+		const icon = document.body.querySelector(`${LIST_SELECTOR} svg.${ICON_ID}`);
+		icon?.closest(".mobile-toolbar-option")?.addClass(FOLD_BUTTON_CLASS);
 	}
 
 	/** Lays out the unfolded rows: whole columns only, then the fade on hidden rows. */
@@ -656,7 +633,7 @@ export default class UnfoldToolbarPlugin extends Plugin {
 		if (!this.isUnfolded()) return;
 		if (evt.inputType.startsWith("history") || evt.inputType.startsWith("format")) return;
 		if (!(evt.target instanceof Element) || !evt.target.closest(".cm-content")) return;
-		this.setUnfolded(false, true);
+		this.setUnfolded(false);
 	}
 
 	private onTouchStart(evt: TouchEvent): void {
@@ -718,10 +695,6 @@ const TEXT = {
 		name: "Start folded",
 		desc: "The toolbar opens as a single row each time you start editing. Turn off to keep it the way you left it on this device.",
 	},
-	animate: {
-		name: "Animate",
-		desc: "The toolbar unfolds and folds with a short motion. Skipped when your device is set to reduce motion.",
-	},
 	rowsHeading: "Rows when unfolded",
 	rowsPhonePortrait: { name: "Phone, portrait", desc: "" },
 	rowsPhoneLandscape: {
@@ -753,7 +726,7 @@ const TEXT = {
 
 /** Features still being tested: off by default, listed under "Experimental" in the settings. */
 const EXPERIMENTAL_KEYS: FlagKey[] = ["statusPicker", "statusLongPress"];
-const FLAG_KEYS: FlagKey[] = ["startFolded", "animate", ...EXPERIMENTAL_KEYS];
+const FLAG_KEYS: FlagKey[] = ["startFolded", ...EXPERIMENTAL_KEYS];
 /** The Experimental section's explanation, which also says when nothing is being tested. */
 const EXPERIMENTAL_NOTE = {
 	name: TEXT.experimentalNote.name,
@@ -773,7 +746,6 @@ class UnfoldToolbarSettingTab extends PluginSettingTab {
 	getSettingDefinitions(): SettingDefinitionItem[] {
 		return [
 			{ ...TEXT.startFolded, control: { type: "toggle", key: "startFolded" } },
-			{ ...TEXT.animate, control: { type: "toggle", key: "animate" } },
 			{
 				type: "group",
 				heading: TEXT.rowsHeading,
@@ -849,7 +821,6 @@ class UnfoldToolbarSettingTab extends PluginSettingTab {
 		containerEl.empty();
 
 		this.addToggle(containerEl, "startFolded");
-		this.addToggle(containerEl, "animate");
 
 		new Setting(containerEl).setName(TEXT.rowsHeading).setHeading();
 		for (const key of ROW_KEYS) {
