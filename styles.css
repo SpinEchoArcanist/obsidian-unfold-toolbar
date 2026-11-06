@@ -188,7 +188,7 @@ body.is-mobile.ut-unfolded .mobile-toolbar-options-list > .mobile-toolbar-option
 	}
 }
 
-/* Checkbox status picker (Experimental).
+/* Checkbox status picker.
  *
  * Each row of the list is a one-line task, built like the reading view builds one, so the theme
  * draws its checkbox and text exactly as in a note. These rules only undo the reading view's page
@@ -246,7 +246,7 @@ body.is-mobile.ut-unfolded .mobile-toolbar-options-list > .mobile-toolbar-option
 	white-space: pre;
 }
 
-/* Long press on a checkbox (Experimental): keep the system's own long-press text selection and
+/* Long press on a checkbox: keep the system's own long-press text selection and
  * callout off checkboxes in Live Preview, so the hold opens the status list instead. */
 body.ut-long-press .markdown-source-view.is-live-preview .cm-content input.task-list-item-checkbox {
 	-webkit-touch-callout: none;

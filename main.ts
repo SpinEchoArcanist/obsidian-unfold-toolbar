@@ -37,8 +37,8 @@ const DEFAULT_SETTINGS: UnfoldToolbarSettings = {
 	rowsPhoneLandscape: 2,
 	rowsTablet: 4,
 	startFolded: true,
-	statusPicker: false,
-	statusLongPress: false,
+	statusPicker: true,
+	statusLongPress: true,
 	statusVisibility: {},
 };
 
@@ -695,14 +695,18 @@ const TEXT = {
 		name: "Start folded",
 		desc: "The toolbar opens as a single row each time you start editing. Turn off to keep it the way you left it on this device.",
 	},
-	rowsHeading: "Rows when unfolded",
-	rowsPhonePortrait: { name: "Phone, portrait", desc: "" },
+	unfoldingHeading: "Unfolding behaviour",
+	rowsPhonePortrait: {
+		name: "Rows on a phone, portrait",
+		desc: "How many rows the unfolded toolbar shows. More rows show more commands but take more of the screen.",
+	},
 	rowsPhoneLandscape: {
-		name: "Phone, landscape",
+		name: "Rows on a phone, landscape",
 		desc: "The keyboard takes most of the screen here. Choose 1 row to keep the toolbar folded.",
 	},
-	rowsTablet: { name: "Tablet", desc: "Used in both orientations." },
-	experimentalHeading: "Experimental",
+	rowsTablet: { name: "Rows on a tablet", desc: "Used in both orientations." },
+	checkboxHeading: "Checkbox behaviour",
+	experimentalHeading: "Experimental behaviour",
 	experimentalNote: {
 		name: "Features in testing",
 		desc: "New features appear here first, switched off, while they are being tested. Once tested, they become standard or are removed.",
@@ -724,9 +728,11 @@ const TEXT = {
 	removeCheckbox: "Remove checkbox",
 } as const;
 
-/** Features still being tested: off by default, listed under "Experimental" in the settings. */
-const EXPERIMENTAL_KEYS: FlagKey[] = ["statusPicker", "statusLongPress"];
-const FLAG_KEYS: FlagKey[] = ["startFolded", ...EXPERIMENTAL_KEYS];
+/** The two ways to open the checkbox status list, under "Checkbox behaviour" in the settings. */
+const CHECKBOX_KEYS: FlagKey[] = ["statusPicker", "statusLongPress"];
+/** Features still being tested: off by default, listed under "Experimental behaviour". None at the moment. */
+const EXPERIMENTAL_KEYS: FlagKey[] = [];
+const FLAG_KEYS: FlagKey[] = ["startFolded", ...CHECKBOX_KEYS, ...EXPERIMENTAL_KEYS];
 /** The Experimental section's explanation, which also says when nothing is being tested. */
 const EXPERIMENTAL_NOTE = {
 	name: TEXT.experimentalNote.name,
@@ -745,22 +751,22 @@ class UnfoldToolbarSettingTab extends PluginSettingTab {
 	/** Obsidian 1.13+: declarative settings, indexed by the global settings search. */
 	getSettingDefinitions(): SettingDefinitionItem[] {
 		return [
-			{ ...TEXT.startFolded, control: { type: "toggle", key: "startFolded" } },
 			{
 				type: "group",
-				heading: TEXT.rowsHeading,
-				items: ROW_KEYS.map((key) => ({
-					name: TEXT[key].name,
-					desc: TEXT[key].desc || undefined,
-					control: { type: "dropdown" as const, key, options: rowOptions(key) },
-				})),
+				heading: TEXT.unfoldingHeading,
+				items: [
+					{ ...TEXT.startFolded, control: { type: "toggle" as const, key: "startFolded" } },
+					...ROW_KEYS.map((key) => ({
+						...TEXT[key],
+						control: { type: "dropdown" as const, key, options: rowOptions(key) },
+					})),
+				],
 			},
 			{
 				type: "group",
-				heading: TEXT.experimentalHeading,
+				heading: TEXT.checkboxHeading,
 				items: [
-					{ ...EXPERIMENTAL_NOTE, searchable: false },
-					...EXPERIMENTAL_KEYS.map((key) => ({ ...TEXT[key], control: { type: "toggle" as const, key } })),
+					...CHECKBOX_KEYS.map((key) => ({ ...TEXT[key], control: { type: "toggle" as const, key } })),
 					{
 						type: "page",
 						...TEXT.statuses,
@@ -776,6 +782,14 @@ class UnfoldToolbarSettingTab extends PluginSettingTab {
 							},
 						],
 					},
+				],
+			},
+			{
+				type: "group",
+				heading: TEXT.experimentalHeading,
+				items: [
+					{ ...EXPERIMENTAL_NOTE, searchable: false },
+					...EXPERIMENTAL_KEYS.map((key) => ({ ...TEXT[key], control: { type: "toggle" as const, key } })),
 				],
 			},
 		];
@@ -801,7 +815,7 @@ class UnfoldToolbarSettingTab extends PluginSettingTab {
 			if (key === "statusPicker" || key === "statusLongPress") {
 				this.plugin.syncStatusCommand();
 				this.plugin.syncLongPress();
-				// The list of statuses shows only while the picker is on.
+				// The list of statuses shows only while the picker or the long press is on.
 				if (requireApiVersion("1.13.0")) this.refreshDomState();
 				else this.renderByHand();
 			}
@@ -820,38 +834,42 @@ class UnfoldToolbarSettingTab extends PluginSettingTab {
 		const { containerEl } = this;
 		containerEl.empty();
 
+		new Setting(containerEl).setName(TEXT.unfoldingHeading).setHeading();
 		this.addToggle(containerEl, "startFolded");
-
-		new Setting(containerEl).setName(TEXT.rowsHeading).setHeading();
 		for (const key of ROW_KEYS) {
-			const setting = new Setting(containerEl).setName(TEXT[key].name);
-			if (TEXT[key].desc) setting.setDesc(TEXT[key].desc);
-			setting.addDropdown((dropdown) =>
-				dropdown
-					.addOptions(rowOptions(key))
-					.setValue(String(this.plugin.settings[key]))
-					.onChange(async (value) => {
-						await this.setControlValue(key, value);
-					})
-			);
+			new Setting(containerEl)
+				.setName(TEXT[key].name)
+				.setDesc(TEXT[key].desc)
+				.addDropdown((dropdown) =>
+					dropdown
+						.addOptions(rowOptions(key))
+						.setValue(String(this.plugin.settings[key]))
+						.onChange(async (value) => {
+							await this.setControlValue(key, value);
+						})
+				);
+		}
+
+		new Setting(containerEl).setName(TEXT.checkboxHeading).setHeading();
+		for (const key of CHECKBOX_KEYS) this.addToggle(containerEl, key);
+		// Without pages in this version, the statuses are listed in the section itself.
+		if (this.plugin.usesStatusList()) {
+			new Setting(containerEl).setName(TEXT.statuses.name).setDesc(TEXT.statuses.desc);
+			for (const status of STATUSES) {
+				new Setting(containerEl)
+					.setName(status.name)
+					.setDesc(`[${status.char}]`)
+					.addToggle((toggle) =>
+						toggle.setValue(this.plugin.isStatusShown(status)).onChange(async (value) => {
+							await this.setControlValue(STATUS_KEY_PREFIX + status.char, value);
+						})
+					);
+			}
 		}
 
 		new Setting(containerEl).setName(TEXT.experimentalHeading).setHeading();
 		new Setting(containerEl).setName(EXPERIMENTAL_NOTE.name).setDesc(EXPERIMENTAL_NOTE.desc);
 		for (const key of EXPERIMENTAL_KEYS) this.addToggle(containerEl, key);
-
-		if (!this.plugin.usesStatusList()) return;
-		new Setting(containerEl).setName(TEXT.statuses.name).setDesc(TEXT.statuses.desc).setHeading();
-		for (const status of STATUSES) {
-			new Setting(containerEl)
-				.setName(status.name)
-				.setDesc(`[${status.char}]`)
-				.addToggle((toggle) =>
-					toggle.setValue(this.plugin.isStatusShown(status)).onChange(async (value) => {
-						await this.setControlValue(STATUS_KEY_PREFIX + status.char, value);
-					})
-				);
-		}
 	}
 
 	private addToggle(containerEl: HTMLElement, key: FlagKey): void {
